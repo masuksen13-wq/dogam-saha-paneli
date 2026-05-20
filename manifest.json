@@ -1,0 +1,17 @@
+{
+  "name": "Doğam Böcek İlaçlama",
+  "short_name": "Doğam",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#111412",
+  "theme_color": "#111412",
+  "description": "Randevu ve personel takip uygulaması",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,1399 @@
+const DATA_VERSION = "dogam-v9";
+const SERVER_MODE = location.protocol === "http:" || location.protocol === "https:";
+let serverAvailable = false;
+let syncTimer = null;
+
+const DEFAULT_STAFF = [
+  { name: "Mahşuk Gerde", pin: "1234", role: "Yönetici / Ziraat Mühendisi", type: "manager" },
+  { name: "Ali", pin: "2222", role: "Personel", type: "personnel" },
+  { name: "Servet Yılmaz", pin: "3333", role: "Personel", type: "personnel" },
+];
+
+const statusLabels = {
+  planned: "Planlandı",
+  active: "Sahada",
+  done: "Tamamlandı",
+};
+
+const paymentLabels = {
+  cash: "Nakit",
+  iban: "IBAN",
+  debt: "Borç",
+};
+
+const memoryStore = {};
+
+function createId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+const DEFAULT_CUSTOMERS = [
+  {
+    id: createId(),
+    name: "Murat Kaya",
+    phone: "0532 111 22 33",
+    address: "Cumhuriyet Mah. 1402 Sok. No: 8 Daire: 5",
+    note: "Mutfak ve banyo giderleri hassas.",
+  },
+  {
+    id: createId(),
+    name: "Ece Apartmanı",
+    phone: "0544 222 33 44",
+    address: "Atatürk Cad. No: 21 bina girişi",
+    note: "Bodrum katta yoğunluk var.",
+  },
+];
+
+const DEFAULT_INVENTORY = [
+  { id: createId(), name: "Jel yem", quantity: 24, unit: "adet" },
+  { id: createId(), name: "Fare yem istasyonu", quantity: 12, unit: "adet" },
+  { id: createId(), name: "Genel ilaç", quantity: 8, unit: "litre" },
+];
+
+const DEFAULT_CHEMICAL_DELIVERIES = [
+  {
+    id: createId(),
+    staff: "Ali",
+    liquid: 2,
+    gel: 150,
+    note: "Haftalık saha çıkışı",
+    date: new Date().toISOString(),
+  },
+  {
+    id: createId(),
+    staff: "Servet Yılmaz",
+    liquid: 3,
+    gel: 200,
+    note: "Rutin servisler için verildi",
+    date: new Date().toISOString(),
+  },
+];
+
+const DEFAULT_APPOINTMENTS = [
+  {
+    id: createId(),
+    customer: "Murat Kaya",
+    phone: "0532 111 22 33",
+    address: "Cumhuriyet Mah. 1402 Sok. No: 8 Daire: 5",
+    date: new Date().toISOString().slice(0, 10),
+    time: "10:30",
+    service: "Haşere ilaçlama",
+    staff: "Ali",
+    note: "Mutfak ve banyo giderleri özellikle kontrol edilecek.",
+    amount: 1500,
+    status: "planned",
+    paymentMethod: "",
+    paidAmount: 0,
+    debtAmount: 1500,
+    photos: [],
+    stockUsage: [],
+  },
+  {
+    id: createId(),
+    customer: "Ece Apartmanı",
+    phone: "0544 222 33 44",
+    address: "Atatürk Cad. No: 21 bina girişi",
+    date: new Date().toISOString().slice(0, 10),
+    time: "14:00",
+    service: "Periyodik servis",
+    staff: "Servet Yılmaz",
+    note: "Yönetici kapıda karşılayacak.",
+    amount: 2500,
+    status: "active",
+    paymentMethod: "",
+    paidAmount: 0,
+    debtAmount: 2500,
+    photos: [],
+    stockUsage: [],
+  },
+];
+
+const DEFAULT_ROUTINES = [
+  {
+    id: createId(),
+    title: "Ece Apartmanı aylık servis",
+    customer: "Ece Apartmanı",
+    address: "Atatürk Cad. No: 21 bina girişi",
+    service: "Periyodik servis",
+    staff: "Servet Yılmaz",
+    frequencyDays: 30,
+    nextDate: new Date().toISOString().slice(0, 10),
+    amount: 2500,
+    note: "Bodrum ve ortak alanlar kontrol edilecek.",
+    lastCompleted: "",
+    lastPaymentMethod: "",
+  },
+];
+
+function getStored(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return memoryStore[key] || null;
+  }
+}
+
+function setStored(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    memoryStore[key] = value;
+  }
+}
+
+function removeStored(key) {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    delete memoryStore[key];
+  }
+}
+
+function parseJson(value, fallback) {
+  try {
+    return value ? JSON.parse(value) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+async function apiRequest(path, options = {}) {
+  if (!SERVER_MODE) throw new Error("Sunucu modu kapalı.");
+
+  const response = await fetch(path, {
+    cache: "no-store",
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+    ...options,
+  });
+
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "Sunucu isteği başarısız.");
+  return data;
+}
+
+function currentDataBundle() {
+  return {
+    staff,
+    customers,
+    inventory,
+    chemicalDeliveries,
+    appointments,
+    routines,
+  };
+}
+
+function applyDataBundle(data) {
+  staff = Array.isArray(data.staff) ? data.staff : staff;
+  customers = Array.isArray(data.customers) ? data.customers : customers;
+  inventory = Array.isArray(data.inventory) ? data.inventory : inventory;
+  chemicalDeliveries = Array.isArray(data.chemicalDeliveries) ? data.chemicalDeliveries : chemicalDeliveries;
+  appointments = Array.isArray(data.appointments) ? data.appointments : appointments;
+  routines = Array.isArray(data.routines) ? data.routines : routines;
+}
+
+async function pullServerData() {
+  if (!SERVER_MODE) return false;
+
+  try {
+    const data = await apiRequest("/api/data");
+    applyDataBundle(data);
+    serverAvailable = true;
+    persistLocalSnapshot();
+    return true;
+  } catch {
+    serverAvailable = false;
+    return false;
+  }
+}
+
+function persistLocalSnapshot() {
+  setStored("dogamDataVersion", DATA_VERSION);
+  setStored("dogamStaff", JSON.stringify(staff));
+  setStored("dogamCustomers", JSON.stringify(customers));
+  setStored("dogamInventory", JSON.stringify(inventory));
+  setStored("dogamChemicalDeliveries", JSON.stringify(chemicalDeliveries));
+  setStored("dogamAppointments", JSON.stringify(appointments));
+  setStored("dogamRoutines", JSON.stringify(routines));
+}
+
+function scheduleServerSave() {
+  if (!serverAvailable) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(pushServerData, 350);
+}
+
+async function pushServerData() {
+  if (!serverAvailable) return;
+
+  try {
+    await apiRequest("/api/data", {
+      method: "POST",
+      body: JSON.stringify(currentDataBundle()),
+    });
+  } catch {
+    serverAvailable = false;
+  }
+}
+
+function initializeDataStore() {
+  if (getStored("dogamDataVersion") === DATA_VERSION) return;
+  setStored("dogamDataVersion", DATA_VERSION);
+  setStored("dogamStaff", JSON.stringify(DEFAULT_STAFF));
+  setStored("dogamCustomers", JSON.stringify(DEFAULT_CUSTOMERS));
+  setStored("dogamInventory", JSON.stringify(DEFAULT_INVENTORY));
+  setStored("dogamChemicalDeliveries", JSON.stringify(DEFAULT_CHEMICAL_DELIVERIES));
+  setStored("dogamAppointments", JSON.stringify(DEFAULT_APPOINTMENTS));
+  setStored("dogamRoutines", JSON.stringify(DEFAULT_ROUTINES));
+  removeStored("dogamCurrentUser");
+  removeStored("dogamNotifications");
+}
+
+initializeDataStore();
+
+let staff = loadStaff();
+let customers = loadCustomers();
+let inventory = loadInventory();
+let chemicalDeliveries = loadChemicalDeliveries();
+let appointments = loadAppointments();
+let routines = loadRoutines();
+let currentUser = loadCurrentUser();
+let deferredInstallPrompt = null;
+
+const appShell = document.querySelector("#appShell");
+const loginScreen = document.querySelector("#loginScreen");
+const loginForm = document.querySelector("#loginForm");
+const loginStaffValue = document.querySelector("#loginStaffValue");
+const loginStaffButtons = document.querySelector("#loginStaffButtons");
+const loginError = document.querySelector("#loginError");
+const signedUser = document.querySelector("#signedUser");
+const logoutButton = document.querySelector("#logoutButton");
+const listEl = document.querySelector("#appointmentList");
+const template = document.querySelector("#appointmentTemplate");
+const routineTemplate = document.querySelector("#routineTemplate");
+const staffFilter = document.querySelector("#staffFilter");
+const statusFilter = document.querySelector("#statusFilter");
+const staffFilterButtons = document.querySelector("#staffFilterButtons");
+const staffSelectValue = document.querySelector("#staffSelectValue");
+const staffAssignButtons = document.querySelector("#staffAssignButtons");
+const routineStaffValue = document.querySelector("#routineStaffValue");
+const routineStaffButtons = document.querySelector("#routineStaffButtons");
+const form = document.querySelector("#appointmentForm");
+const staffForm = document.querySelector("#staffForm");
+const routineForm = document.querySelector("#routineForm");
+const routineList = document.querySelector("#routineList");
+const notificationButton = document.querySelector("#notificationButton");
+const customerList = document.querySelector("#customerList");
+const reportGrid = document.querySelector("#reportGrid");
+const stockForm = document.querySelector("#stockForm");
+const stockList = document.querySelector("#stockList");
+const chemicalForm = document.querySelector("#chemicalForm");
+const chemicalStaffValue = document.querySelector("#chemicalStaffValue");
+const chemicalStaffButtons = document.querySelector("#chemicalStaffButtons");
+const chemicalList = document.querySelector("#chemicalList");
+const exportButton = document.querySelector("#exportButton");
+const importData = document.querySelector("#importData");
+const importButton = document.querySelector("#importButton");
+
+function loadStaff() {
+  return parseJson(getStored("dogamStaff"), DEFAULT_STAFF);
+}
+
+function saveStaff() {
+  setStored("dogamStaff", JSON.stringify(staff));
+  scheduleServerSave();
+}
+
+function loadCustomers() {
+  return parseJson(getStored("dogamCustomers"), DEFAULT_CUSTOMERS);
+}
+
+function saveCustomers() {
+  setStored("dogamCustomers", JSON.stringify(customers));
+  scheduleServerSave();
+}
+
+function loadInventory() {
+  return parseJson(getStored("dogamInventory"), DEFAULT_INVENTORY);
+}
+
+function saveInventory() {
+  setStored("dogamInventory", JSON.stringify(inventory));
+  scheduleServerSave();
+}
+
+function loadChemicalDeliveries() {
+  return parseJson(getStored("dogamChemicalDeliveries"), DEFAULT_CHEMICAL_DELIVERIES);
+}
+
+function saveChemicalDeliveries() {
+  setStored("dogamChemicalDeliveries", JSON.stringify(chemicalDeliveries));
+  scheduleServerSave();
+}
+
+function loadAppointments() {
+  return parseJson(getStored("dogamAppointments"), DEFAULT_APPOINTMENTS);
+}
+
+function saveAppointments() {
+  setStored("dogamAppointments", JSON.stringify(appointments));
+  scheduleServerSave();
+}
+
+function loadRoutines() {
+  return parseJson(getStored("dogamRoutines"), DEFAULT_ROUTINES);
+}
+
+function saveRoutines() {
+  setStored("dogamRoutines", JSON.stringify(routines));
+  scheduleServerSave();
+}
+
+function loadCurrentUser() {
+  const user = parseJson(getStored("dogamCurrentUser"), null);
+  return staff.some((person) => person.name === user?.name && person.type === user?.type) ? user : null;
+}
+
+function saveCurrentUser(user) {
+  currentUser = user;
+  setStored("dogamCurrentUser", JSON.stringify(user));
+}
+
+function clearCurrentUser() {
+  currentUser = null;
+  removeStored("dogamCurrentUser");
+}
+
+function saveAll() {
+  saveStaff();
+  saveCustomers();
+  saveInventory();
+  saveChemicalDeliveries();
+  saveAppointments();
+  saveRoutines();
+}
+
+function isManager() {
+  return currentUser?.type === "manager";
+}
+
+function todayIso() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function currentTime() {
+  return new Date().toTimeString().slice(0, 5);
+}
+
+function formatDate(date) {
+  return new Intl.DateTimeFormat("tr-TR", {
+    day: "2-digit",
+    month: "short",
+    weekday: "short",
+  }).format(new Date(`${date}T12:00:00`));
+}
+
+function formatMoney(value) {
+  return `${Number(value || 0).toLocaleString("tr-TR")}₺`;
+}
+
+function addDays(date, days) {
+  const next = new Date(`${date}T12:00:00`);
+  next.setDate(next.getDate() + Number(days || 30));
+  return next.toISOString().slice(0, 10);
+}
+
+function mapsUrl(address) {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+}
+
+function cleanPhone(phone) {
+  const digits = String(phone || "").replace(/\D/g, "");
+  if (!digits) return "";
+  if (digits.startsWith("90")) return digits;
+  if (digits.startsWith("0")) return `90${digits.slice(1)}`;
+  if (digits.startsWith("5")) return `90${digits}`;
+  return digits;
+}
+
+function whatsappUrl(item) {
+  const phone = cleanPhone(item.phone);
+  const text = `Merhaba, Doğam Böcek İlaçlama randevunuz ${formatDate(item.date || todayIso())} ${item.time || ""} için planlanmıştır.`;
+  return phone ? `https://wa.me/${phone}?text=${encodeURIComponent(text)}` : "";
+}
+
+function personnel() {
+  return staff.filter((person) => person.type === "personnel");
+}
+
+function ensureCustomer(name, phone, address, note = "") {
+  const normalized = name.trim().toLocaleLowerCase("tr-TR");
+  let customer = customers.find((item) => item.name.toLocaleLowerCase("tr-TR") === normalized);
+
+  if (!customer) {
+    customer = { id: createId(), name: name.trim(), phone: phone || "", address: address || "", note };
+    customers.push(customer);
+  } else {
+    if (phone) customer.phone = phone;
+    if (address) customer.address = address;
+    if (note && !customer.note) customer.note = note;
+  }
+
+  saveCustomers();
+  return customer;
+}
+
+function renderOptions() {
+  loginStaffButtons.replaceChildren();
+  staffFilter.innerHTML = '<option value="all">Tümü</option>';
+  staffFilterButtons.replaceChildren();
+  staffAssignButtons.replaceChildren();
+  routineStaffButtons.replaceChildren();
+  chemicalStaffButtons.replaceChildren();
+
+  staff.forEach((person) => {
+    const button = createChoiceButton(person.name, person.role, person.name);
+    button.addEventListener("click", () => {
+      setChoice(loginStaffButtons, button);
+      loginStaffValue.value = person.name;
+      loginError.textContent = "";
+    });
+    loginStaffButtons.append(button);
+  });
+
+  const allButton = createChoiceButton("Tümü", "Yönetici görünümü", "all");
+  allButton.addEventListener("click", () => {
+    setChoice(staffFilterButtons, allButton);
+    staffFilter.value = "all";
+    render();
+  });
+  staffFilterButtons.append(allButton);
+
+  personnel().forEach((person) => {
+    staffFilter.append(new Option(person.name, person.name));
+
+    const filterButton = createChoiceButton(person.name, "Atanan işler", person.name);
+    filterButton.addEventListener("click", () => {
+      setChoice(staffFilterButtons, filterButton);
+      staffFilter.value = person.name;
+      render();
+    });
+    staffFilterButtons.append(filterButton);
+
+    const assignButton = createChoiceButton(person.name, "İşi yönlendir", person.name);
+    assignButton.addEventListener("click", () => {
+      setChoice(staffAssignButtons, assignButton);
+      staffSelectValue.value = person.name;
+    });
+    staffAssignButtons.append(assignButton);
+
+    const routineButton = createChoiceButton(person.name, "Rutin sorumlusu", person.name);
+    routineButton.addEventListener("click", () => {
+      setChoice(routineStaffButtons, routineButton);
+      routineStaffValue.value = person.name;
+    });
+    routineStaffButtons.append(routineButton);
+
+    const chemicalButton = createChoiceButton(person.name, "İlaç ver", person.name);
+    chemicalButton.addEventListener("click", () => {
+      setChoice(chemicalStaffButtons, chemicalButton);
+      chemicalStaffValue.value = person.name;
+    });
+    chemicalStaffButtons.append(chemicalButton);
+  });
+
+  setDefaultChoices();
+}
+
+function createChoiceButton(title, subtitle, value) {
+  const button = document.createElement("button");
+  button.className = "choice-button";
+  button.type = "button";
+  button.dataset.value = value;
+  button.innerHTML = `<strong>${title}</strong><small>${subtitle}</small>`;
+  return button;
+}
+
+function setChoice(group, selectedButton) {
+  group.querySelectorAll(".choice-button").forEach((button) => button.classList.remove("selected"));
+  selectedButton.classList.add("selected");
+}
+
+function setButtonByValue(group, value) {
+  const button = [...group.querySelectorAll(".choice-button")].find((item) => item.dataset.value === value);
+  if (button) setChoice(group, button);
+}
+
+function setDefaultChoices() {
+  const manager = staff.find((person) => person.type === "manager");
+  const firstPersonnel = personnel()[0];
+
+  const loginValue = loginStaffValue.value || manager?.name;
+  if (loginValue) {
+    loginStaffValue.value = loginValue;
+    setButtonByValue(loginStaffButtons, loginValue);
+  }
+
+  if (firstPersonnel) {
+    staffSelectValue.value = firstPersonnel.name;
+    routineStaffValue.value = firstPersonnel.name;
+    chemicalStaffValue.value = firstPersonnel.name;
+    setButtonByValue(staffAssignButtons, firstPersonnel.name);
+    setButtonByValue(routineStaffButtons, firstPersonnel.name);
+    setButtonByValue(chemicalStaffButtons, firstPersonnel.name);
+  }
+
+  staffFilter.value = staffFilter.value || "all";
+  setButtonByValue(staffFilterButtons, staffFilter.value);
+}
+
+function applyPermissions() {
+  document.querySelectorAll(".manager-only").forEach((item) => {
+    item.classList.toggle("is-hidden", !isManager());
+  });
+
+  document.querySelector(".tabs").classList.toggle("personnel-tabs", !isManager());
+  staffFilter.disabled = !isManager();
+
+  if (isManager()) {
+    staffFilter.value = staffFilter.value || "all";
+    setButtonByValue(staffFilterButtons, staffFilter.value);
+  } else {
+    staffFilter.value = currentUser.name;
+    setButtonByValue(staffFilterButtons, currentUser.name);
+    document.querySelector('[data-view="appointments"]').click();
+  }
+}
+
+function renderAuthState() {
+  if (currentUser) {
+    loginScreen.classList.add("is-hidden");
+    appShell.classList.remove("is-hidden");
+    signedUser.textContent = `${currentUser.name} - ${currentUser.role}`;
+    applyPermissions();
+    render();
+    maybeNotifyDueItems();
+    return;
+  }
+
+  appShell.classList.add("is-hidden");
+  loginScreen.classList.remove("is-hidden");
+}
+
+function visibleAppointments() {
+  if (!currentUser) return [];
+  if (!isManager()) return appointments.filter((item) => item.staff === currentUser.name);
+  return staffFilter.value === "all" ? appointments : appointments.filter((item) => item.staff === staffFilter.value);
+}
+
+function visibleRoutines() {
+  if (!currentUser) return [];
+  if (!isManager()) return routines.filter((item) => item.staff === currentUser.name);
+  return routines;
+}
+
+function renderAppointments() {
+  const selectedStatus = statusFilter.value;
+  const filtered = visibleAppointments()
+    .filter((item) => selectedStatus === "all" || item.status === selectedStatus)
+    .sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
+
+  listEl.replaceChildren();
+
+  if (!filtered.length) {
+    listEl.append(emptyState("Bu filtreye uygun iş yok."));
+    return;
+  }
+
+  filtered.forEach((appointment) => {
+    const card = template.content.firstElementChild.cloneNode(true);
+    card.querySelector("h2").textContent = appointment.customer;
+    card.querySelector(".meta").textContent = `${formatDate(appointment.date)} ${appointment.time} - ${appointment.service} - ${appointment.staff}`;
+    card.querySelector(".note").textContent = appointment.note || "Not girilmedi.";
+
+    const address = card.querySelector(".map-link");
+    address.href = mapsUrl(appointment.address);
+    address.textContent = appointment.address;
+
+    const phoneLink = card.querySelector(".phone-link");
+    phoneLink.textContent = appointment.phone || "Telefon yok";
+    phoneLink.href = appointment.phone ? `tel:${appointment.phone}` : "#";
+
+    const whatsapp = card.querySelector(".whatsapp-link");
+    const whatsappHref = whatsappUrl(appointment);
+    whatsapp.href = whatsappHref || "#";
+    whatsapp.classList.toggle("disabled-link", !whatsappHref);
+
+    const pill = card.querySelector(".status-pill");
+    pill.textContent = statusLabels[appointment.status];
+    pill.classList.add(`status-${appointment.status}`);
+
+    card.querySelector(".payment-line").textContent = paymentSummary(appointment);
+    card.querySelector(".location-line").innerHTML = locationSummary(appointment);
+    card.querySelector(".amount-input").value = appointment.amount || 0;
+
+    renderMediaGallery(card.querySelector(".media-gallery"), appointment);
+    renderStockSelect(card.querySelector(".stock-select"));
+    setupSignaturePad(card.querySelector(".signature-pad"), (signature) => {
+      appointment.signature = signature;
+      saveAppointments();
+      render();
+    });
+
+    card.querySelectorAll("[data-action]").forEach((button) => {
+      button.addEventListener("click", () => {
+        appointment.status = button.dataset.action;
+        saveAppointments();
+        render();
+      });
+    });
+
+    card.querySelectorAll("[data-payment]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const amount = Number(card.querySelector(".amount-input").value || appointment.amount || 0);
+        completeAppointment(appointment.id, button.dataset.payment, amount);
+      });
+    });
+
+    card.querySelector("[data-location]").addEventListener("click", () => captureLocation(appointment.id));
+    card.querySelector(".photo-input").addEventListener("change", (event) => addPhoto(appointment.id, event.target.files?.[0]));
+    card.querySelector(".stock-use-button").addEventListener("click", () => {
+      const stockId = card.querySelector(".stock-select").value;
+      const quantity = Number(card.querySelector(".stock-qty").value || 0);
+      useStock(appointment.id, stockId, quantity);
+    });
+
+    listEl.append(card);
+  });
+}
+
+function paymentSummary(item) {
+  const amount = formatMoney(item.amount || 0);
+  if (!item.paymentMethod) return `Tutar: ${amount} - Tahsilat bekliyor`;
+  if (item.paymentMethod === "debt") return `Tutar: ${amount} - Borç: ${formatMoney(item.debtAmount || item.amount || 0)}`;
+  return `Tutar: ${amount} - Ödeme: ${paymentLabels[item.paymentMethod]} - ${item.completedBy || ""}`;
+}
+
+function locationSummary(item) {
+  if (!item.location) return "Konum doğrulanmadı";
+  const url = mapsUrl(`${item.location.lat},${item.location.lng}`);
+  return `Konum doğrulandı - <a href="${url}" target="_blank" rel="noopener">Haritada aç</a>`;
+}
+
+function renderMediaGallery(container, item) {
+  container.replaceChildren();
+
+  (item.photos || []).forEach((photo) => {
+    const img = document.createElement("img");
+    img.src = photo.dataUrl;
+    img.alt = "İş fotoğrafı";
+    container.append(img);
+  });
+
+  if (item.signature) {
+    const img = document.createElement("img");
+    img.src = item.signature;
+    img.alt = "Müşteri imzası";
+    img.className = "signature-image";
+    container.append(img);
+  }
+
+  (item.stockUsage || []).forEach((usage) => {
+    const line = document.createElement("p");
+    line.className = "usage-chip";
+    line.textContent = `${usage.name}: ${usage.quantity} ${usage.unit}`;
+    container.append(line);
+  });
+}
+
+function renderStockSelect(select) {
+  select.replaceChildren(new Option("Stok seç", ""));
+  inventory.forEach((item) => {
+    select.append(new Option(`${item.name} (${item.quantity} ${item.unit})`, item.id));
+  });
+}
+
+function setupSignaturePad(canvas, onSave) {
+  const context = canvas.getContext("2d");
+  context.lineWidth = 2;
+  context.lineCap = "round";
+  context.strokeStyle = "#111412";
+
+  let drawing = false;
+
+  function point(event) {
+    const rect = canvas.getBoundingClientRect();
+    const source = event.touches?.[0] || event;
+    return {
+      x: ((source.clientX - rect.left) / rect.width) * canvas.width,
+      y: ((source.clientY - rect.top) / rect.height) * canvas.height,
+    };
+  }
+
+  function start(event) {
+    drawing = true;
+    const current = point(event);
+    context.beginPath();
+    context.moveTo(current.x, current.y);
+    event.preventDefault();
+  }
+
+  function move(event) {
+    if (!drawing) return;
+    const current = point(event);
+    context.lineTo(current.x, current.y);
+    context.stroke();
+    event.preventDefault();
+  }
+
+  function stop() {
+    drawing = false;
+  }
+
+  canvas.addEventListener("pointerdown", start);
+  canvas.addEventListener("pointermove", move);
+  canvas.addEventListener("pointerup", stop);
+  canvas.addEventListener("pointerleave", stop);
+  canvas.addEventListener("touchstart", start, { passive: false });
+  canvas.addEventListener("touchmove", move, { passive: false });
+  canvas.addEventListener("touchend", stop);
+
+  const wrap = canvas.closest(".signature-wrap");
+  wrap.querySelector(".signature-clear").addEventListener("click", () => {
+    context.clearRect(0, 0, canvas.width, canvas.height);
+  });
+  wrap.querySelector(".signature-save").addEventListener("click", () => onSave(canvas.toDataURL("image/png")));
+}
+
+function completeAppointment(id, paymentMethod, amount) {
+  const appointment = appointments.find((item) => item.id === id);
+  if (!appointment) return;
+
+  appointment.status = "done";
+  appointment.amount = amount;
+  appointment.paymentMethod = paymentMethod;
+  appointment.paidAmount = paymentMethod === "debt" ? 0 : amount;
+  appointment.debtAmount = paymentMethod === "debt" ? amount : 0;
+  appointment.completedBy = currentUser.name;
+  appointment.completedAt = new Date().toISOString();
+  saveAppointments();
+  render();
+}
+
+function captureLocation(id) {
+  const appointment = appointments.find((item) => item.id === id);
+  if (!appointment || !navigator.geolocation) return;
+
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      appointment.location = {
+        lat: position.coords.latitude.toFixed(6),
+        lng: position.coords.longitude.toFixed(6),
+        at: new Date().toISOString(),
+      };
+      saveAppointments();
+      render();
+    },
+    () => {
+      appointment.locationError = "Konum alınamadı";
+      saveAppointments();
+      render();
+    },
+    { enableHighAccuracy: true, timeout: 10000 },
+  );
+}
+
+function addPhoto(id, file) {
+  if (!file) return;
+  const appointment = appointments.find((item) => item.id === id);
+  if (!appointment) return;
+
+  const reader = new FileReader();
+  reader.addEventListener("load", () => {
+    const image = new Image();
+    image.addEventListener("load", () => {
+      const maxSize = 900;
+      const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(image.width * scale));
+      canvas.height = Math.max(1, Math.round(image.height * scale));
+      const context = canvas.getContext("2d");
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      savePhoto(appointment, canvas.toDataURL("image/jpeg", 0.76));
+    });
+    image.addEventListener("error", () => savePhoto(appointment, reader.result));
+    image.src = reader.result;
+  });
+  reader.readAsDataURL(file);
+}
+
+function savePhoto(appointment, dataUrl) {
+  appointment.photos = appointment.photos || [];
+  appointment.photos.push({ id: createId(), dataUrl, at: new Date().toISOString() });
+  saveAppointments();
+  render();
+}
+
+function useStock(appointmentId, stockId, quantity) {
+  if (!stockId || quantity <= 0) return;
+  const item = inventory.find((stock) => stock.id === stockId);
+  const appointment = appointments.find((job) => job.id === appointmentId);
+  if (!item || !appointment) return;
+
+  const used = Math.min(quantity, item.quantity);
+  item.quantity = Math.max(0, item.quantity - used);
+  appointment.stockUsage = appointment.stockUsage || [];
+  appointment.stockUsage.push({ id: item.id, name: item.name, quantity: used, unit: item.unit });
+  saveInventory();
+  saveAppointments();
+  render();
+}
+
+function renderRoutines() {
+  const filtered = visibleRoutines().sort((a, b) => a.nextDate.localeCompare(b.nextDate));
+  routineList.replaceChildren();
+
+  if (!filtered.length) {
+    routineList.append(emptyState("Kayıtlı rutin iş yok."));
+    return;
+  }
+
+  filtered.forEach((routine) => {
+    const card = routineTemplate.content.firstElementChild.cloneNode(true);
+    const due = routine.nextDate <= todayIso();
+    card.classList.toggle("due", due);
+    card.querySelector("h2").textContent = routine.title;
+    card.querySelector(".meta").textContent = `${formatDate(routine.nextDate)} - ${routine.service} - ${routine.staff}`;
+    card.querySelector(".note").textContent = routine.note || "Not girilmedi.";
+    card.querySelector(".routine-cycle").textContent = `${routine.frequencyDays} günde bir - ${formatMoney(routine.amount || 0)}`;
+
+    const address = card.querySelector(".map-link");
+    address.href = mapsUrl(routine.address);
+    address.textContent = routine.address;
+
+    const pill = card.querySelector(".status-pill");
+    pill.textContent = due ? "Günü Geldi" : "Planlı";
+    pill.classList.add(due ? "status-active" : "status-planned");
+
+    const payment = card.querySelector(".payment-line");
+    payment.textContent = routine.lastPaymentMethod
+      ? `Son ödeme: ${paymentLabels[routine.lastPaymentMethod]} - ${routine.completedBy || routine.staff}`
+      : "Henüz tamamlanmadı";
+
+    card.querySelectorAll("[data-routine-payment]").forEach((button) => {
+      button.addEventListener("click", () => completeRoutine(routine.id, button.dataset.routinePayment));
+    });
+
+    routineList.append(card);
+  });
+}
+
+function completeRoutine(id, paymentMethod) {
+  const routine = routines.find((item) => item.id === id);
+  if (!routine) return;
+
+  routine.lastCompleted = new Date().toISOString();
+  routine.lastPaymentMethod = paymentMethod;
+  routine.completedBy = currentUser.name;
+  routine.nextDate = addDays(todayIso(), routine.frequencyDays);
+
+  appointments.push({
+    id: createId(),
+    customer: routine.customer,
+    phone: customers.find((customer) => customer.name === routine.customer)?.phone || "",
+    address: routine.address,
+    date: todayIso(),
+    time: currentTime(),
+    service: routine.service,
+    staff: routine.staff,
+    note: `Rutin iş tamamlandı. ${routine.note || ""}`.trim(),
+    amount: Number(routine.amount || 0),
+    status: "done",
+    paymentMethod,
+    paidAmount: paymentMethod === "debt" ? 0 : Number(routine.amount || 0),
+    debtAmount: paymentMethod === "debt" ? Number(routine.amount || 0) : 0,
+    completedBy: currentUser.name,
+    completedAt: new Date().toISOString(),
+    photos: [],
+    stockUsage: [],
+  });
+
+  ensureCustomer(routine.customer, "", routine.address, routine.note);
+  saveRoutines();
+  saveAppointments();
+  render();
+}
+
+function renderCustomers() {
+  customerList.replaceChildren();
+
+  customers.forEach((customer) => {
+    const history = appointments.filter((item) => item.customer === customer.name);
+    const debt = history.reduce((total, item) => total + Number(item.debtAmount || 0), 0);
+    const paid = history.reduce((total, item) => total + Number(item.paidAmount || 0), 0);
+    const card = document.createElement("article");
+    card.className = "appointment-card";
+    card.innerHTML = `
+      <div class="card-head">
+        <div>
+          <h2>${customer.name}</h2>
+          <p class="meta">${history.length} iş - Tahsilat ${formatMoney(paid)} - Borç ${formatMoney(debt)}</p>
+        </div>
+      </div>
+      <a class="address map-link" href="${mapsUrl(customer.address)}" target="_blank" rel="noopener">${customer.address || "Adres yok"}</a>
+      <div class="quick-links">
+        <a class="phone-link" href="${customer.phone ? `tel:${customer.phone}` : "#"}">${customer.phone || "Telefon yok"}</a>
+        <a class="whatsapp-link" href="${customer.phone ? `https://wa.me/${cleanPhone(customer.phone)}` : "#"}" target="_blank" rel="noopener">WhatsApp</a>
+      </div>
+      <p class="note">${customer.note || "Not yok"}</p>
+      <p class="payment-line">${history.slice(-3).map((item) => `${formatDate(item.date)} ${item.service}`).join(" / ") || "Geçmiş iş yok"}</p>
+    `;
+    customerList.append(card);
+  });
+}
+
+function renderReports() {
+  const totalJobs = appointments.length;
+  const doneJobs = appointments.filter((item) => item.status === "done").length;
+  const cash = appointments.filter((item) => item.paymentMethod === "cash").reduce((sum, item) => sum + Number(item.paidAmount || 0), 0);
+  const iban = appointments.filter((item) => item.paymentMethod === "iban").reduce((sum, item) => sum + Number(item.paidAmount || 0), 0);
+  const debt = appointments.reduce((sum, item) => sum + Number(item.debtAmount || 0), 0);
+  const dueRoutineCount = routines.filter((item) => item.nextDate <= todayIso()).length;
+  const totalLiquid = chemicalDeliveries.reduce((sum, item) => sum + Number(item.liquid || 0), 0);
+  const totalGel = chemicalDeliveries.reduce((sum, item) => sum + Number(item.gel || 0), 0);
+
+  const staffRows = personnel()
+    .map((person) => {
+      const jobs = appointments.filter((item) => item.staff === person.name);
+      const completed = jobs.filter((item) => item.status === "done").length;
+      const supplies = staffChemicalTotals(person.name);
+      return `<p><strong>${person.name}</strong> ${completed}/${jobs.length} iş - ${formatChemicalTotals(supplies)}</p>`;
+    })
+    .join("");
+
+  reportGrid.innerHTML = `
+    ${reportCard("Toplam İş", totalJobs)}
+    ${reportCard("Tamamlanan", doneJobs)}
+    ${reportCard("Nakit", formatMoney(cash))}
+    ${reportCard("IBAN", formatMoney(iban))}
+    ${reportCard("Borç", formatMoney(debt))}
+    ${reportCard("Günü Gelen Rutin", dueRoutineCount)}
+    ${reportCard("Verilen Sıvı", `${totalLiquid.toLocaleString("tr-TR")} L`)}
+    ${reportCard("Verilen Jel", `${totalGel.toLocaleString("tr-TR")} gr`)}
+    <article class="report-card wide"><h2>Personel Performansı</h2>${staffRows || "<p>Personel yok</p>"}</article>
+  `;
+}
+
+function reportCard(title, value) {
+  return `<article class="report-card"><span>${value}</span><p>${title}</p></article>`;
+}
+
+function renderStock() {
+  stockList.replaceChildren();
+  chemicalList.replaceChildren();
+
+  const sortedDeliveries = [...chemicalDeliveries].sort((a, b) => b.date.localeCompare(a.date));
+
+  if (!sortedDeliveries.length) {
+    chemicalList.append(emptyState("Personele verilmiş ilaç kaydı yok."));
+  }
+
+  sortedDeliveries.forEach((delivery) => {
+    const card = document.createElement("article");
+    card.className = "staff-card supply-card";
+    card.innerHTML = `
+      <div>
+        <strong>${delivery.staff}</strong>
+        <span>${new Date(delivery.date).toLocaleString("tr-TR")} - ${delivery.note || "Not yok"}</span>
+        <small>Sıvı: ${Number(delivery.liquid || 0).toLocaleString("tr-TR")} L / Jel: ${Number(delivery.gel || 0).toLocaleString("tr-TR")} gr</small>
+      </div>
+    `;
+    chemicalList.append(card);
+  });
+
+  inventory.forEach((item) => {
+    const card = document.createElement("article");
+    card.className = "staff-card";
+    card.innerHTML = `
+      <div>
+        <strong>${item.name}</strong>
+        <span>${item.unit}</span>
+      </div>
+      <b>${item.quantity}</b>
+    `;
+    stockList.append(card);
+  });
+}
+
+function renderStaff() {
+  const staffList = document.querySelector("#staffList");
+  staffList.replaceChildren();
+
+  personnel().forEach((person) => {
+    const openJobs = appointments.filter((item) => item.staff === person.name && item.status !== "done").length;
+    const routineJobs = routines.filter((item) => item.staff === person.name).length;
+    const supplies = staffChemicalTotals(person.name);
+    const card = document.createElement("article");
+    card.className = "staff-card";
+    card.innerHTML = `
+      <div>
+        <strong>${person.name}</strong>
+        <span>${person.role} - ${routineJobs} rutin</span>
+        <small>${formatChemicalTotals(supplies)}</small>
+      </div>
+      <b>${openJobs}</b>
+    `;
+    staffList.append(card);
+  });
+}
+
+function staffChemicalTotals(staffName) {
+  return chemicalDeliveries
+    .filter((item) => item.staff === staffName)
+    .reduce(
+      (totals, item) => {
+        totals.liquid += Number(item.liquid || 0);
+        totals.gel += Number(item.gel || 0);
+        return totals;
+      },
+      { liquid: 0, gel: 0 },
+    );
+}
+
+function formatChemicalTotals(totals) {
+  return `Verilen ilaç: ${totals.liquid.toLocaleString("tr-TR")} L sıvı / ${totals.gel.toLocaleString("tr-TR")} gr jel`;
+}
+
+function renderSummary() {
+  const visible = visibleAppointments();
+  const revenue = visible.reduce((sum, item) => sum + Number(item.paidAmount || 0), 0);
+  document.querySelector("#todayCount").textContent = visible.filter((item) => item.date === todayIso()).length;
+  document.querySelector("#openCount").textContent = visible.filter((item) => item.status !== "done").length;
+  document.querySelector("#doneCount").textContent = visible.filter((item) => item.status === "done").length;
+  document.querySelector("#revenueCount").textContent = formatMoney(revenue);
+}
+
+function emptyState(text) {
+  const empty = document.createElement("p");
+  empty.className = "empty-state";
+  empty.textContent = text;
+  return empty;
+}
+
+function renderNotificationButton() {
+  if (!("Notification" in window)) {
+    notificationButton.hidden = true;
+    return;
+  }
+
+  notificationButton.hidden = false;
+  notificationButton.textContent = Notification.permission === "granted" ? "Bildirim Açık" : "Bildirimleri Aç";
+  notificationButton.disabled = Notification.permission === "granted";
+}
+
+function maybeNotifyDueItems() {
+  if (!currentUser || !("Notification" in window) || Notification.permission !== "granted") return;
+
+  const notified = parseJson(getStored("dogamNotifications"), []);
+  const dueRoutines = visibleRoutines().filter((routine) => routine.nextDate <= todayIso());
+  const dueJobs = visibleAppointments().filter((item) => item.date === todayIso() && item.status !== "done");
+
+  [...dueRoutines, ...dueJobs].forEach((item) => {
+    const key = `${currentUser.name}:${item.id}:${item.nextDate || item.date}`;
+    if (notified.includes(key)) return;
+
+    new Notification(item.nextDate ? "Rutin iş günü geldi" : "Bugünkü iş", {
+      body: `${item.title || item.customer} - ${item.staff}`,
+    });
+    notified.push(key);
+  });
+
+  setStored("dogamNotifications", JSON.stringify(notified));
+}
+
+function render() {
+  renderSummary();
+  renderAppointments();
+  renderRoutines();
+  renderCustomers();
+  renderReports();
+  renderStock();
+  renderStaff();
+  renderNotificationButton();
+}
+
+document.querySelectorAll(".tab").forEach((tab) => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".tab, .view").forEach((item) => item.classList.remove("active"));
+    tab.classList.add("active");
+    document.querySelector(`#${tab.dataset.view}View`).classList.add("active");
+  });
+});
+
+loginForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const data = new FormData(loginForm);
+  let person = null;
+
+  if (serverAvailable) {
+    try {
+      const result = await apiRequest("/api/login", {
+        method: "POST",
+        body: JSON.stringify({
+          staff: data.get("staff"),
+          pin: data.get("pin"),
+        }),
+      });
+      person = result.user;
+    } catch (error) {
+      loginError.textContent = error.message;
+      return;
+    }
+  } else {
+    person = staff.find((item) => item.name === data.get("staff") && item.pin === data.get("pin"));
+  }
+
+  if (!person) {
+    loginError.textContent = "Personel veya PIN hatalı.";
+    return;
+  }
+
+  loginError.textContent = "";
+  saveCurrentUser({ name: person.name, role: person.role, type: person.type });
+  staffFilter.value = person.type === "manager" ? "all" : person.name;
+  setButtonByValue(staffFilterButtons, staffFilter.value);
+  loginForm.reset();
+  loginStaffValue.value = person.name;
+  setButtonByValue(loginStaffButtons, person.name);
+  renderAuthState();
+});
+
+logoutButton.addEventListener("click", () => {
+  clearCurrentUser();
+  renderAuthState();
+});
+
+statusFilter.addEventListener("change", render);
+staffFilter.addEventListener("change", render);
+
+form.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (!isManager()) return;
+
+  const data = new FormData(form);
+  ensureCustomer(data.get("customer"), data.get("phone"), data.get("address"), data.get("note"));
+  appointments.push({
+    id: createId(),
+    customer: data.get("customer").trim(),
+    phone: data.get("phone").trim(),
+    address: data.get("address").trim(),
+    date: data.get("date"),
+    time: data.get("time"),
+    service: data.get("service"),
+    staff: data.get("staff"),
+    note: data.get("note").trim(),
+    amount: Number(data.get("amount") || 0),
+    status: "planned",
+    paymentMethod: "",
+    paidAmount: 0,
+    debtAmount: Number(data.get("amount") || 0),
+    photos: [],
+    stockUsage: [],
+  });
+  saveAppointments();
+  form.reset();
+  setDefaultChoices();
+  document.querySelector('[data-view="appointments"]').click();
+  render();
+});
+
+staffForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (!isManager()) return;
+
+  const data = new FormData(staffForm);
+  const name = data.get("name").trim();
+  const pin = data.get("pin").trim();
+  const role = data.get("role").trim() || "Personel";
+
+  if (!name || !pin) return;
+  if (staff.some((person) => person.name.toLocaleLowerCase("tr-TR") === name.toLocaleLowerCase("tr-TR"))) return;
+
+  staff.push({ name, pin, role, type: "personnel" });
+  saveStaff();
+  staffForm.reset();
+  renderOptions();
+  applyPermissions();
+  render();
+});
+
+routineForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (!isManager()) return;
+
+  const data = new FormData(routineForm);
+  ensureCustomer(data.get("customer"), "", data.get("address"), data.get("note"));
+  routines.push({
+    id: createId(),
+    title: data.get("title").trim(),
+    customer: data.get("customer").trim(),
+    address: data.get("address").trim(),
+    service: data.get("service"),
+    staff: data.get("staff"),
+    frequencyDays: Number(data.get("frequencyDays")) || 30,
+    nextDate: data.get("nextDate"),
+    amount: Number(data.get("amount") || 0),
+    note: data.get("note").trim(),
+    lastCompleted: "",
+    lastPaymentMethod: "",
+  });
+  saveRoutines();
+  routineForm.reset();
+  setDefaultChoices();
+  render();
+});
+
+stockForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (!isManager()) return;
+
+  const data = new FormData(stockForm);
+  const name = data.get("name").trim();
+  const quantity = Number(data.get("quantity") || 0);
+  const unit = data.get("unit").trim() || "adet";
+  const existing = inventory.find((item) => item.name.toLocaleLowerCase("tr-TR") === name.toLocaleLowerCase("tr-TR"));
+
+  if (existing) {
+    existing.quantity += quantity;
+    existing.unit = unit;
+  } else {
+    inventory.push({ id: createId(), name, quantity, unit });
+  }
+
+  saveInventory();
+  stockForm.reset();
+  render();
+});
+
+chemicalForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (!isManager()) return;
+
+  const data = new FormData(chemicalForm);
+  const delivery = {
+    id: createId(),
+    staff: data.get("staff"),
+    liquid: Number(data.get("liquid") || 0),
+    gel: Number(data.get("gel") || 0),
+    note: data.get("note").trim(),
+    date: new Date().toISOString(),
+  };
+
+  if (!delivery.staff || (delivery.liquid <= 0 && delivery.gel <= 0)) return;
+
+  chemicalDeliveries.push(delivery);
+  saveChemicalDeliveries();
+  chemicalForm.reset();
+  setDefaultChoices();
+  render();
+});
+
+notificationButton.addEventListener("click", async () => {
+  if (!("Notification" in window)) return;
+  await Notification.requestPermission();
+  renderNotificationButton();
+  maybeNotifyDueItems();
+});
+
+exportButton.addEventListener("click", () => {
+  const bundle = {
+    version: DATA_VERSION,
+    exportedAt: new Date().toISOString(),
+    staff,
+    customers,
+    inventory,
+    chemicalDeliveries,
+    appointments,
+    routines,
+  };
+  const text = JSON.stringify(bundle, null, 2);
+  importData.value = text;
+
+  const blob = new Blob([text], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `dogam-yedek-${todayIso()}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+});
+
+importButton.addEventListener("click", () => {
+  const bundle = parseJson(importData.value, null);
+  if (!bundle) return;
+
+  staff = Array.isArray(bundle.staff) ? bundle.staff : staff;
+  customers = Array.isArray(bundle.customers) ? bundle.customers : customers;
+  inventory = Array.isArray(bundle.inventory) ? bundle.inventory : inventory;
+  chemicalDeliveries = Array.isArray(bundle.chemicalDeliveries) ? bundle.chemicalDeliveries : chemicalDeliveries;
+  appointments = Array.isArray(bundle.appointments) ? bundle.appointments : appointments;
+  routines = Array.isArray(bundle.routines) ? bundle.routines : routines;
+  saveAll();
+  renderOptions();
+  applyPermissions();
+  render();
+});
+
+window.addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault();
+  deferredInstallPrompt = event;
+  document.querySelector("#installButton").hidden = false;
+});
+
+document.querySelector("#installButton").addEventListener("click", async () => {
+  if (!deferredInstallPrompt) return;
+  deferredInstallPrompt.prompt();
+  await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt = null;
+});
+
+if ("serviceWorker" in navigator && location.protocol !== "file:") {
+  navigator.serviceWorker.register("service-worker.js");
+}
+
+try {
+  if (location.search) {
+    history.replaceState(null, "", location.href.split("?")[0]);
+  }
+} catch {
+  // The app still works if a local file browser blocks URL cleanup.
+}
+
+async function refreshFromServer() {
+  if (!serverAvailable || document.hidden) return;
+  const activeView = document.querySelector(".tab.active")?.dataset.view;
+  const activeFilter = staffFilter.value;
+
+  if (await pullServerData()) {
+    renderOptions();
+    staffFilter.value = activeFilter;
+    if (activeView) document.querySelector(`[data-view="${activeView}"]`)?.classList.add("active");
+    applyPermissions();
+    render();
+  }
+}
+
+async function bootApp() {
+  await pullServerData();
+  renderOptions();
+  renderAuthState();
+
+  if (serverAvailable) {
+    setInterval(refreshFromServer, 30000);
+  }
+}
+
+bootApp();

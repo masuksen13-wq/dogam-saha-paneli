@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#111412" />
+    <title>Doğam Böcek İlaçlama</title>
+    <link rel="manifest" href="manifest.json?v=10" />
+    <link rel="stylesheet" href="styles.css?v=10" />
+  </head>
+  <body>
+    <section class="login-screen" id="loginScreen">
+      <div class="login-panel">
+        <img class="login-logo" src="logo.jpeg?v=10" alt="Doğam Böcek İlaçlama" />
+        <p class="eyebrow">Saha Yönetimi</p>
+        <h1>Personel Girişi</h1>
+        <p class="login-copy">Randevu, rutin servis, tahsilat, fotoğraf, imza ve stok kayıtlarını tek ekrandan yönetin.</p>
+        <form id="loginForm" class="login-form" action="javascript:void(0)" onsubmit="return false">
+          <div class="choice-field">
+            <span>Personel</span>
+            <input type="hidden" name="staff" id="loginStaffValue" required />
+            <div class="choice-grid" id="loginStaffButtons"></div>
+          </div>
+          <label>
+            PIN
+            <input name="pin" type="password" inputmode="numeric" autocomplete="current-password" required placeholder="4 haneli PIN" />
+          </label>
+          <p class="login-error" id="loginError" role="alert"></p>
+          <button class="primary-button" type="submit">Giriş Yap</button>
+        </form>
+      </div>
+    </section>
+
+    <div class="app-shell is-hidden" id="appShell">
+      <header class="topbar">
+        <div class="brand-block">
+          <img src="logo.jpeg?v=10" alt="Doğam Böcek İlaçlama" />
+          <div>
+            <p class="eyebrow">Doğam Böcek İlaçlama</p>
+            <h1>Saha Paneli</h1>
+            <p class="signed-user" id="signedUser"></p>
+          </div>
+        </div>
+        <div class="header-actions">
+          <button class="icon-button" id="installButton" type="button" title="Telefona ekle" hidden>+</button>
+          <button class="logout-button" id="logoutButton" type="button">Çıkış</button>
+        </div>
+      </header>
+
+      <main>
+        <section class="summary-grid" aria-label="İş özeti">
+          <article>
+            <span id="todayCount">0</span>
+            <p>Bugün</p>
+          </article>
+          <article>
+            <span id="openCount">0</span>
+            <p>Açık iş</p>
+          </article>
+          <article>
+            <span id="doneCount">0</span>
+            <p>Tamamlanan</p>
+          </article>
+          <article>
+            <span id="revenueCount">0₺</span>
+            <p>Tahsilat</p>
+          </article>
+        </section>
+
+        <nav class="tabs" aria-label="Görünümler">
+          <button class="tab active" data-view="appointments" type="button">İşler</button>
+          <button class="tab manager-only" data-view="new" type="button">Yeni İş</button>
+          <button class="tab" data-view="routines" type="button">Rutin</button>
+          <button class="tab manager-only" data-view="customers" type="button">Müşteri</button>
+          <button class="tab manager-only" data-view="reports" type="button">Rapor</button>
+          <button class="tab manager-only" data-view="stock" type="button">Stok</button>
+          <button class="tab manager-only" data-view="staff" type="button">Personel</button>
+          <button class="tab manager-only" data-view="data" type="button">Veri</button>
+        </nav>
+
+        <section class="view active" id="appointmentsView">
+          <div class="toolbar">
+            <label>
+              <span>Durum</span>
+              <select id="statusFilter">
+                <option value="all">Tümü</option>
+                <option value="planned">Planlandı</option>
+                <option value="active">Sahada</option>
+                <option value="done">Tamamlandı</option>
+              </select>
+            </label>
+            <label class="manager-only">
+              <span>Personel</span>
+              <select id="staffFilter" class="select-fallback">
+                <option value="all">Tümü</option>
+              </select>
+              <div class="choice-grid compact" id="staffFilterButtons"></div>
+            </label>
+          </div>
+          <div class="appointment-list" id="appointmentList"></div>
+        </section>
+
+        <section class="view" id="newView">
+          <form id="appointmentForm" class="form-card" action="javascript:void(0)" onsubmit="return false">
+            <label>
+              Müşteri adı
+              <input name="customer" required placeholder="Örn. Ayşe Yılmaz" />
+            </label>
+            <label>
+              Telefon
+              <input name="phone" inputmode="tel" placeholder="05xx xxx xx xx" />
+            </label>
+            <label>
+              Adres
+              <textarea name="address" required rows="3" placeholder="Mahalle, sokak, bina..."></textarea>
+            </label>
+            <div class="form-row">
+              <label>
+                Tarih
+                <input name="date" type="date" required />
+              </label>
+              <label>
+                Saat
+                <input name="time" type="time" required />
+              </label>
+            </div>
+            <div class="form-row">
+              <label>
+                İşlem
+                <select name="service">
+                  <option>Haşere ilaçlama</option>
+                  <option>Fare mücadelesi</option>
+                  <option>Genel kontrol</option>
+                  <option>Periyodik servis</option>
+                </select>
+              </label>
+              <label>
+                Tutar
+                <input name="amount" type="number" min="0" inputmode="decimal" placeholder="0" />
+              </label>
+            </div>
+            <div class="choice-field">
+              <span>Personel</span>
+              <input type="hidden" name="staff" id="staffSelectValue" required />
+              <div class="choice-grid" id="staffAssignButtons"></div>
+            </div>
+            <label>
+              Not
+              <textarea name="note" rows="3" placeholder="Kapı şifresi, özel istek, riskli alan..."></textarea>
+            </label>
+            <button class="primary-button" type="submit">İşi Kaydet</button>
+          </form>
+        </section>
+
+        <section class="view" id="routinesView">
+          <div class="section-head">
+            <h2>Rutin İşler</h2>
+            <button class="secondary-button" id="notificationButton" type="button">Bildirimleri Aç</button>
+          </div>
+
+          <form id="routineForm" class="form-card manager-only" action="javascript:void(0)" onsubmit="return false">
+            <label>
+              Rutin adı
+              <input name="title" required placeholder="Örn. Site aylık ilaçlama" />
+            </label>
+            <label>
+              Müşteri
+              <input name="customer" required placeholder="Örn. Ece Apartmanı" />
+            </label>
+            <label>
+              Adres
+              <textarea name="address" required rows="3" placeholder="Rutin iş adresi"></textarea>
+            </label>
+            <div class="form-row">
+              <label>
+                Sonraki tarih
+                <input name="nextDate" type="date" required />
+              </label>
+              <label>
+                Periyot
+                <input name="frequencyDays" type="number" min="1" value="30" required />
+              </label>
+            </div>
+            <div class="form-row">
+              <label>
+                İşlem
+                <select name="service">
+                  <option>Periyodik servis</option>
+                  <option>Haşere ilaçlama</option>
+                  <option>Fare mücadelesi</option>
+                  <option>Genel kontrol</option>
+                </select>
+              </label>
+              <label>
+                Tutar
+                <input name="amount" type="number" min="0" inputmode="decimal" placeholder="0" />
+              </label>
+            </div>
+            <div class="choice-field">
+              <span>Personel</span>
+              <input type="hidden" name="staff" id="routineStaffValue" required />
+              <div class="choice-grid" id="routineStaffButtons"></div>
+            </div>
+            <label>
+              Not
+              <textarea name="note" rows="3" placeholder="Rutin iş notu"></textarea>
+            </label>
+            <button class="primary-button" type="submit">Rutini Kaydet</button>
+          </form>
+
+          <div class="appointment-list" id="routineList"></div>
+        </section>
+
+        <section class="view" id="customersView">
+          <div class="appointment-list" id="customerList"></div>
+        </section>
+
+        <section class="view" id="reportsView">
+          <div class="report-grid" id="reportGrid"></div>
+        </section>
+
+        <section class="view" id="stockView">
+          <form id="chemicalForm" class="form-card" action="javascript:void(0)" onsubmit="return false">
+            <div class="choice-field">
+              <span>Personele verilen ilaç</span>
+              <input type="hidden" name="staff" id="chemicalStaffValue" required />
+              <div class="choice-grid" id="chemicalStaffButtons"></div>
+            </div>
+            <div class="form-row">
+              <label>
+                Sıvı ilaç
+                <input name="liquid" type="number" min="0" step="0.1" inputmode="decimal" placeholder="Litre" />
+              </label>
+              <label>
+                Jel ilaç
+                <input name="gel" type="number" min="0" step="1" inputmode="decimal" placeholder="Gram" />
+              </label>
+            </div>
+            <label>
+              Not
+              <textarea name="note" rows="2" placeholder="Örn. Haftalık saha çıkışı için verildi"></textarea>
+            </label>
+            <button class="primary-button" type="submit">İlaç Kaydını Ekle</button>
+          </form>
+          <div class="staff-list supply-list" id="chemicalList"></div>
+
+          <form id="stockForm" class="form-card" action="javascript:void(0)" onsubmit="return false">
+            <label>
+              Malzeme adı
+              <input name="name" required placeholder="Örn. Jel yem" />
+            </label>
+            <div class="form-row">
+              <label>
+                Adet / miktar
+                <input name="quantity" type="number" min="0" step="1" required placeholder="0" />
+              </label>
+              <label>
+                Birim
+                <input name="unit" value="adet" required />
+              </label>
+            </div>
+            <button class="primary-button" type="submit">Stoka Ekle</button>
+          </form>
+          <div class="staff-list" id="stockList"></div>
+        </section>
+
+        <section class="view" id="staffView">
+          <form id="staffForm" class="form-card" action="javascript:void(0)" onsubmit="return false">
+            <label>
+              Personel adı
+              <input name="name" required placeholder="Örn. Ahmet Yılmaz" />
+            </label>
+            <div class="form-row">
+              <label>
+                Görev
+                <input name="role" value="Personel" required />
+              </label>
+              <label>
+                PIN
+                <input name="pin" inputmode="numeric" required placeholder="4 haneli PIN" />
+              </label>
+            </div>
+            <button class="primary-button" type="submit">Personel Ekle</button>
+          </form>
+          <div class="staff-list" id="staffList"></div>
+        </section>
+
+        <section class="view" id="dataView">
+          <div class="form-card">
+            <button class="primary-button" id="exportButton" type="button">Veriyi Dışa Aktar</button>
+            <label>
+              İçe aktarılacak JSON
+              <textarea id="importData" rows="8" placeholder="Dışa aktarılan veriyi buraya yapıştırın"></textarea>
+            </label>
+            <button class="secondary-button" id="importButton" type="button">Veriyi İçe Aktar</button>
+            <p class="muted-text">Bu prototip veriyi cihazda tutar. Ortak veritabanı için aynı ekranlar bir sunucuya bağlanacak şekilde hazırlandı.</p>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <template id="appointmentTemplate">
+      <article class="appointment-card">
+        <div class="card-head">
+          <div>
+            <h2></h2>
+            <p class="meta"></p>
+          </div>
+          <span class="status-pill"></span>
+        </div>
+        <a class="address map-link" target="_blank" rel="noopener"></a>
+        <div class="quick-links">
+          <a class="phone-link" target="_blank" rel="noopener"></a>
+          <a class="whatsapp-link" target="_blank" rel="noopener">WhatsApp</a>
+        </div>
+        <p class="note"></p>
+        <p class="payment-line"></p>
+        <p class="location-line"></p>
+        <div class="media-gallery"></div>
+
+        <details class="completion-box">
+          <summary>İşlem / Tahsilat</summary>
+          <div class="form-row">
+            <label>
+              Tutar
+              <input class="amount-input" type="number" min="0" inputmode="decimal" />
+            </label>
+            <label>
+              Stok
+              <select class="stock-select"></select>
+            </label>
+          </div>
+          <div class="form-row">
+            <label>
+              Stok miktarı
+              <input class="stock-qty" type="number" min="0" step="1" value="0" />
+            </label>
+            <button class="secondary-button stock-use-button" type="button">Stok Düş</button>
+          </div>
+          <label class="file-button">
+            Fotoğraf Ekle
+            <input class="photo-input" type="file" accept="image/*" capture="environment" />
+          </label>
+          <div class="signature-wrap">
+            <span>Müşteri imzası</span>
+            <canvas class="signature-pad" width="320" height="130"></canvas>
+            <div class="mini-actions">
+              <button class="secondary-button signature-clear" type="button">Temizle</button>
+              <button class="secondary-button signature-save" type="button">İmzayı Kaydet</button>
+            </div>
+          </div>
+          <div class="actions">
+            <button data-action="active" type="button">Sahada</button>
+            <button data-location type="button">Konum Al</button>
+            <button data-payment="cash" type="button">Nakit Tamamla</button>
+            <button data-payment="iban" type="button">IBAN Tamamla</button>
+            <button data-payment="debt" type="button">Borç Bırak</button>
+          </div>
+        </details>
+      </article>
+    </template>
+
+    <template id="routineTemplate">
+      <article class="appointment-card routine-card">
+        <div class="card-head">
+          <div>
+            <h2></h2>
+            <p class="meta"></p>
+          </div>
+          <span class="status-pill"></span>
+        </div>
+        <a class="address map-link" target="_blank" rel="noopener"></a>
+        <p class="routine-cycle"></p>
+        <p class="note"></p>
+        <p class="payment-line"></p>
+        <div class="actions">
+          <button data-routine-payment="cash" type="button">Nakit Tamamla</button>
+          <button data-routine-payment="iban" type="button">IBAN Tamamla</button>
+          <button data-routine-payment="debt" type="button">Borç Bırak</button>
+        </div>
+      </article>
+    </template>
+
+    <script src="app.js?v=10"></script>
+  </body>
+</html>

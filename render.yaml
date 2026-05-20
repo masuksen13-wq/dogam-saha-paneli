@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: dogam-saha-paneli
+    runtime: node
+    plan: starter
+    buildCommand: ""
+    startCommand: "npm start"
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /var/data
+    disk:
+      name: dogam-data
+      mountPath: /var/data
+      sizeGB: 1
