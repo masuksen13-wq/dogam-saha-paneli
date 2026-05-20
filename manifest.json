@@ -4,8 +4,8 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#111412",
-  "theme_color": "#111412",
+  "background_color": "#ffffff",
+  "theme_color": "#c1121f",
   "description": "Randevu ve personel takip uygulaması",
   "icons": [
     {
@@ -26,5 +26,8 @@
       "type": "image/svg+xml",
       "purpose": "any maskable"
     }
-  ]
+  ],
+  "id": "com.dogambocekilaclama.app",
+  "dir": "ltr",
+  "lang": "tr"
 }
