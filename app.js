@@ -648,7 +648,12 @@ function renderAppointments() {
   filtered.forEach((appointment) => {
     const card = template.content.firstElementChild.cloneNode(true);
     card.querySelector("h2").textContent = appointment.customer;
-    card.querySelector(".meta").textContent = `${formatDate(appointment.date)} ${appointment.time} - ${appointment.service} - ${appointment.staff}`;
+    renderJobMeta(card.querySelector(".meta"), [
+      { label: "Tarih", value: formatDate(appointment.date) },
+      { label: "Saat", value: appointment.time || "-" },
+      { label: "İşlem", value: appointment.service },
+      { label: "Personel", value: appointment.staff },
+    ]);
     card.querySelector(".note").textContent = appointment.note || "Not girilmedi.";
 
     const address = card.querySelector(".map-link");
@@ -716,6 +721,23 @@ function paymentSummary(item) {
   if (!item.paymentMethod) return `Tutar: ${amount} - Tahsilat bekliyor`;
   if (item.paymentMethod === "debt") return `Tutar: ${amount} - Borç: ${formatMoney(item.debtAmount || item.amount || 0)}`;
   return `Tutar: ${amount} - Ödeme: ${paymentLabels[item.paymentMethod]} - ${item.completedBy || ""}`;
+}
+
+function renderJobMeta(container, items) {
+  container.replaceChildren();
+  items.forEach((item) => {
+    const chip = document.createElement("span");
+    chip.className = "meta-chip";
+
+    const label = document.createElement("small");
+    label.textContent = item.label;
+
+    const value = document.createElement("strong");
+    value.textContent = item.value || "-";
+
+    chip.append(label, value);
+    container.append(chip);
+  });
 }
 
 function locationSummary(item) {
@@ -920,7 +942,11 @@ function renderRoutines() {
     const due = routine.nextDate <= todayIso();
     card.classList.toggle("due", due);
     card.querySelector("h2").textContent = routine.title;
-    card.querySelector(".meta").textContent = `${formatDate(routine.nextDate)} - ${routine.service} - ${routine.staff}`;
+    renderJobMeta(card.querySelector(".meta"), [
+      { label: "Sonraki", value: formatDate(routine.nextDate) },
+      { label: "İşlem", value: routine.service },
+      { label: "Personel", value: routine.staff },
+    ]);
     card.querySelector(".note").textContent = routine.note || "Not girilmedi.";
     card.querySelector(".routine-cycle").textContent = `${routine.frequencyDays} günde bir - ${formatMoney(routine.amount || 0)}`;
 
