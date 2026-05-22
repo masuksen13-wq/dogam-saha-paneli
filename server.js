@@ -13,6 +13,7 @@ const defaults = {
   version: "dogam-server-v1",
   staff: [
     { name: "Mahşuk Gerde", pin: "1234", role: "Yönetici / Ziraat Mühendisi", type: "manager" },
+    { name: "Mehmet", pin: "4444", role: "Yönetici", type: "manager" },
     { name: "Ali", pin: "2222", role: "Personel", type: "personnel" },
     { name: "Servet Yılmaz", pin: "3333", role: "Personel", type: "personnel" },
   ],
@@ -114,7 +115,7 @@ function ensureData() {
 function readDb() {
   ensureData();
   try {
-    return JSON.parse(fs.readFileSync(dbPath, "utf8"));
+    return normalizeData(JSON.parse(fs.readFileSync(dbPath, "utf8")));
   } catch {
     writeJson(dbPath, defaults);
     return { ...defaults };
@@ -136,9 +137,15 @@ function writeJson(filePath, value) {
 }
 
 function normalizeData(data) {
+  const staffList = Array.isArray(data.staff) ? [...data.staff] : [...defaults.staff];
+  defaults.staff.forEach((defaultPerson) => {
+    const exists = staffList.some((person) => comparableName(person.name) === comparableName(defaultPerson.name));
+    if (!exists) staffList.push(defaultPerson);
+  });
+
   return {
     version: "dogam-server-v1",
-    staff: Array.isArray(data.staff) ? data.staff : defaults.staff,
+    staff: staffList,
     customers: Array.isArray(data.customers) ? data.customers : defaults.customers,
     inventory: Array.isArray(data.inventory) ? data.inventory : defaults.inventory,
     chemicalDeliveries: Array.isArray(data.chemicalDeliveries) ? data.chemicalDeliveries : defaults.chemicalDeliveries,

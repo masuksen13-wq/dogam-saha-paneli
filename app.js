@@ -1,10 +1,11 @@
-const DATA_VERSION = "dogam-v9";
+const DATA_VERSION = "dogam-v11";
 const SERVER_MODE = location.protocol === "http:" || location.protocol === "https:";
 let serverAvailable = false;
 let syncTimer = null;
 
 const DEFAULT_STAFF = [
   { name: "Mahşuk Gerde", pin: "1234", role: "Yönetici / Ziraat Mühendisi", type: "manager" },
+  { name: "Mehmet", pin: "4444", role: "Yönetici", type: "manager" },
   { name: "Ali", pin: "2222", role: "Personel", type: "personnel" },
   { name: "Servet Yılmaz", pin: "3333", role: "Personel", type: "personnel" },
 ];
@@ -195,13 +196,33 @@ function applyDataBundle(data) {
   routines = Array.isArray(data.routines) ? data.routines : routines;
 }
 
+function sameStaffName(left, right) {
+  return String(left || "").toLocaleLowerCase("tr-TR") === String(right || "").toLocaleLowerCase("tr-TR");
+}
+
+function migrateStaffProfiles() {
+  let changed = false;
+
+  DEFAULT_STAFF.forEach((defaultPerson) => {
+    const existing = staff.find((person) => sameStaffName(person.name, defaultPerson.name));
+    if (!existing) {
+      staff.push({ ...defaultPerson });
+      changed = true;
+    }
+  });
+
+  if (changed) saveStaff();
+  return changed;
+}
+
 async function pullServerData() {
   if (!SERVER_MODE) return false;
 
   try {
     const data = await apiRequest("/api/data");
-    applyDataBundle(data);
     serverAvailable = true;
+    applyDataBundle(data);
+    migrateStaffProfiles();
     persistLocalSnapshot();
     return true;
   } catch {
@@ -262,6 +283,8 @@ let appointments = loadAppointments();
 let routines = loadRoutines();
 let currentUser = loadCurrentUser();
 let deferredInstallPrompt = null;
+
+migrateStaffProfiles();
 
 const appShell = document.querySelector("#appShell");
 const loginScreen = document.querySelector("#loginScreen");
@@ -429,6 +452,15 @@ function personnel() {
   return staff.filter((person) => person.type === "personnel");
 }
 
+function assignableStaff() {
+  return staff.filter((person) => person.type === "personnel" || person.type === "manager");
+}
+
+function validAssigneeName(value) {
+  const name = String(value || "").trim();
+  return assignableStaff().some((person) => person.name === name) ? name : "";
+}
+
 function ensureCustomer(name, phone, address, note = "") {
   const normalized = name.trim().toLocaleLowerCase("tr-TR");
   let customer = customers.find((item) => item.name.toLocaleLowerCase("tr-TR") === normalized);
@@ -472,7 +504,7 @@ function renderOptions() {
   });
   staffFilterButtons.append(allButton);
 
-  personnel().forEach((person) => {
+  assignableStaff().forEach((person) => {
     staffFilter.append(new Option(person.name, person.name));
 
     const filterButton = createChoiceButton(person.name, "Atanan işler", person.name);
@@ -529,24 +561,29 @@ function setButtonByValue(group, value) {
 
 function setDefaultChoices() {
   const manager = staff.find((person) => person.type === "manager");
-  const firstPersonnel = personnel()[0];
+  const firstPersonnel = assignableStaff()[0];
+  const fallbackPersonnel = firstPersonnel?.name || "";
 
-  const loginValue = loginStaffValue.value || manager?.name;
+  const loginValue = staff.some((person) => person.name === loginStaffValue.value) ? loginStaffValue.value : manager?.name;
   if (loginValue) {
     loginStaffValue.value = loginValue;
     setButtonByValue(loginStaffButtons, loginValue);
   }
 
-  if (firstPersonnel) {
-    staffSelectValue.value = firstPersonnel.name;
-    routineStaffValue.value = firstPersonnel.name;
-    chemicalStaffValue.value = firstPersonnel.name;
-    setButtonByValue(staffAssignButtons, firstPersonnel.name);
-    setButtonByValue(routineStaffButtons, firstPersonnel.name);
-    setButtonByValue(chemicalStaffButtons, firstPersonnel.name);
+  if (fallbackPersonnel) {
+    const assignedStaff = validAssigneeName(staffSelectValue.value) || fallbackPersonnel;
+    const routineStaff = validAssigneeName(routineStaffValue.value) || fallbackPersonnel;
+    const chemicalStaff = validAssigneeName(chemicalStaffValue.value) || fallbackPersonnel;
+
+    staffSelectValue.value = assignedStaff;
+    routineStaffValue.value = routineStaff;
+    chemicalStaffValue.value = chemicalStaff;
+    setButtonByValue(staffAssignButtons, assignedStaff);
+    setButtonByValue(routineStaffButtons, routineStaff);
+    setButtonByValue(chemicalStaffButtons, chemicalStaff);
   }
 
-  staffFilter.value = staffFilter.value || "all";
+  staffFilter.value = staffFilter.value === "all" || validAssigneeName(staffFilter.value) ? staffFilter.value : "all";
   setButtonByValue(staffFilterButtons, staffFilter.value);
 }
 
@@ -965,7 +1002,7 @@ function renderReports() {
   const totalLiquid = chemicalDeliveries.reduce((sum, item) => sum + Number(item.liquid || 0), 0);
   const totalGel = chemicalDeliveries.reduce((sum, item) => sum + Number(item.gel || 0), 0);
 
-  const staffRows = personnel()
+  const staffRows = assignableStaff()
     .map((person) => {
       const jobs = appointments.filter((item) => item.staff === person.name);
       const completed = jobs.filter((item) => item.status === "done").length;
@@ -1032,7 +1069,7 @@ function renderStaff() {
   const staffList = document.querySelector("#staffList");
   staffList.replaceChildren();
 
-  personnel().forEach((person) => {
+  assignableStaff().forEach((person) => {
     const openJobs = appointments.filter((item) => item.staff === person.name && item.status !== "done").length;
     const routineJobs = routines.filter((item) => item.staff === person.name).length;
     const supplies = staffChemicalTotals(person.name);
@@ -1184,6 +1221,9 @@ form.addEventListener("submit", (event) => {
   if (!isManager()) return;
 
   const data = new FormData(form);
+  const assignedStaff = validAssigneeName(data.get("staff"));
+  if (!assignedStaff) return;
+
   ensureCustomer(data.get("customer"), data.get("phone"), data.get("address"), data.get("note"));
   appointments.push({
     id: createId(),
@@ -1193,7 +1233,7 @@ form.addEventListener("submit", (event) => {
     date: data.get("date"),
     time: data.get("time"),
     service: data.get("service"),
-    staff: data.get("staff"),
+    staff: assignedStaff,
     note: data.get("note").trim(),
     amount: Number(data.get("amount") || 0),
     status: "planned",
@@ -1235,6 +1275,9 @@ routineForm.addEventListener("submit", (event) => {
   if (!isManager()) return;
 
   const data = new FormData(routineForm);
+  const assignedStaff = validAssigneeName(data.get("staff"));
+  if (!assignedStaff) return;
+
   ensureCustomer(data.get("customer"), "", data.get("address"), data.get("note"));
   routines.push({
     id: createId(),
@@ -1242,7 +1285,7 @@ routineForm.addEventListener("submit", (event) => {
     customer: data.get("customer").trim(),
     address: data.get("address").trim(),
     service: data.get("service"),
-    staff: data.get("staff"),
+    staff: assignedStaff,
     frequencyDays: Number(data.get("frequencyDays")) || 30,
     nextDate: data.get("nextDate"),
     amount: Number(data.get("amount") || 0),
@@ -1283,9 +1326,10 @@ chemicalForm.addEventListener("submit", (event) => {
   if (!isManager()) return;
 
   const data = new FormData(chemicalForm);
+  const assignedStaff = validAssigneeName(data.get("staff"));
   const delivery = {
     id: createId(),
-    staff: data.get("staff"),
+    staff: assignedStaff,
     liquid: Number(data.get("liquid") || 0),
     gel: Number(data.get("gel") || 0),
     note: data.get("note").trim(),
