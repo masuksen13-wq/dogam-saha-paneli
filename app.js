@@ -668,6 +668,10 @@ function renderAppointments() {
     pill.textContent = statusLabels[appointment.status];
     pill.classList.add(`status-${appointment.status}`);
 
+    const deleteButton = card.querySelector("[data-delete-appointment]");
+    deleteButton.classList.toggle("is-hidden", !isManager());
+    deleteButton.addEventListener("click", () => deleteAppointment(appointment.id));
+
     card.querySelector(".payment-line").textContent = paymentSummary(appointment);
     card.querySelector(".location-line").innerHTML = locationSummary(appointment);
     card.querySelector(".amount-input").value = appointment.amount || 0;
@@ -816,6 +820,19 @@ function completeAppointment(id, paymentMethod, amount) {
   appointment.debtAmount = paymentMethod === "debt" ? amount : 0;
   appointment.completedBy = currentUser.name;
   appointment.completedAt = new Date().toISOString();
+  saveAppointments();
+  render();
+}
+
+function deleteAppointment(id) {
+  if (!isManager()) return;
+  const appointment = appointments.find((item) => item.id === id);
+  if (!appointment) return;
+
+  const message = `${appointment.customer} işini silmek istiyor musunuz?`;
+  if (!confirm(message)) return;
+
+  appointments = appointments.filter((item) => item.id !== id);
   saveAppointments();
   render();
 }

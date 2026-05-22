@@ -8,7 +8,7 @@
     <link rel="manifest" href="manifest.json?v=12" />
     <link rel="icon" href="icon-192.png" />
     <link rel="apple-touch-icon" href="icon-192.png" />
-    <link rel="stylesheet" href="styles.css?v=10" />
+    <link rel="stylesheet" href="styles.css?v=15" />
   </head>
   <body>
     <section class="login-screen" id="loginScreen">
@@ -308,7 +308,10 @@
             <h2></h2>
             <p class="meta"></p>
           </div>
-          <span class="status-pill"></span>
+          <div class="card-tools">
+            <span class="status-pill"></span>
+            <button class="delete-job-button manager-only" data-delete-appointment type="button">Sil</button>
+          </div>
         </div>
         <a class="address map-link" target="_blank" rel="noopener"></a>
         <div class="quick-links">
@@ -383,6 +386,6 @@
       </article>
     </template>
 
-    <script src="app.js?v=14"></script>
+    <script src="app.js?v=15"></script>
   </body>
 </html>
