@@ -4,7 +4,7 @@ WORKDIR /app
 
 COPY package.json ./
 COPY server.js ./
-COPY app.js index.html styles.css manifest.json service-worker.js icon.svg logo.jpeg ./
+COPY app.js index.html styles.css manifest.json service-worker.js icon.svg icon-192.png icon-512.png icon-maskable-192.png icon-maskable-512.png apple-touch-icon.png logo.jpeg ./
 
 ENV NODE_ENV=production
 ENV PORT=4173
