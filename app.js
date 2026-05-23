@@ -194,6 +194,47 @@ function applyDataBundle(data) {
   chemicalDeliveries = Array.isArray(data.chemicalDeliveries) ? data.chemicalDeliveries : chemicalDeliveries;
   appointments = Array.isArray(data.appointments) ? data.appointments : appointments;
   routines = Array.isArray(data.routines) ? data.routines : routines;
+  normalizeMoneyRecords();
+}
+
+function compactBundle(data) {
+  return {
+    staff: Array.isArray(data.staff) ? data.staff : [],
+    customers: Array.isArray(data.customers) ? data.customers : [],
+    inventory: Array.isArray(data.inventory) ? data.inventory : [],
+    chemicalDeliveries: Array.isArray(data.chemicalDeliveries) ? data.chemicalDeliveries : [],
+    appointments: Array.isArray(data.appointments) ? data.appointments : [],
+    routines: Array.isArray(data.routines) ? data.routines : [],
+  };
+}
+
+function mergeByKey(serverItems, localItems, keySelector) {
+  const merged = new Map();
+
+  [...serverItems, ...localItems].forEach((item, index) => {
+    const key = keySelector(item) || `item-${index}-${JSON.stringify(item)}`;
+    merged.set(key, item);
+  });
+
+  return [...merged.values()];
+}
+
+function mergeDataBundles(localData, serverData) {
+  const local = compactBundle(localData);
+  const server = compactBundle(serverData);
+
+  return {
+    staff: mergeByKey(server.staff, local.staff, (item) => String(item.name || "").toLocaleLowerCase("tr-TR")),
+    customers: mergeByKey(server.customers, local.customers, (item) => item.id || String(item.name || "").toLocaleLowerCase("tr-TR")),
+    inventory: mergeByKey(server.inventory, local.inventory, (item) => item.id || String(item.name || "").toLocaleLowerCase("tr-TR")),
+    chemicalDeliveries: mergeByKey(server.chemicalDeliveries, local.chemicalDeliveries, (item) => item.id),
+    appointments: mergeByKey(server.appointments, local.appointments, (item) => item.id),
+    routines: mergeByKey(server.routines, local.routines, (item) => item.id),
+  };
+}
+
+function sameBundle(left, right) {
+  return JSON.stringify(compactBundle(left)) === JSON.stringify(compactBundle(right));
 }
 
 function sameStaffName(left, right) {
@@ -220,10 +261,16 @@ async function pullServerData() {
 
   try {
     const data = await apiRequest("/api/data");
+    const localData = currentDataBundle();
+    const serverData = compactBundle(data);
+    const mergedData = mergeDataBundles(localData, serverData);
+    const shouldRepairServer = !sameBundle(serverData, mergedData);
+
     serverAvailable = true;
-    applyDataBundle(data);
-    migrateStaffProfiles();
+    applyDataBundle(mergedData);
+    const migrated = migrateStaffProfiles();
     persistLocalSnapshot();
+    if (shouldRepairServer || migrated) scheduleServerSave();
     return true;
   } catch {
     serverAvailable = false;
@@ -261,16 +308,13 @@ async function pushServerData() {
 }
 
 function initializeDataStore() {
-  if (getStored("dogamDataVersion") === DATA_VERSION) return;
   setStored("dogamDataVersion", DATA_VERSION);
-  setStored("dogamStaff", JSON.stringify(DEFAULT_STAFF));
-  setStored("dogamCustomers", JSON.stringify(DEFAULT_CUSTOMERS));
-  setStored("dogamInventory", JSON.stringify(DEFAULT_INVENTORY));
-  setStored("dogamChemicalDeliveries", JSON.stringify(DEFAULT_CHEMICAL_DELIVERIES));
-  setStored("dogamAppointments", JSON.stringify(DEFAULT_APPOINTMENTS));
-  setStored("dogamRoutines", JSON.stringify(DEFAULT_ROUTINES));
-  removeStored("dogamCurrentUser");
-  removeStored("dogamNotifications");
+  if (!getStored("dogamStaff")) setStored("dogamStaff", JSON.stringify(DEFAULT_STAFF));
+  if (!getStored("dogamCustomers")) setStored("dogamCustomers", JSON.stringify(DEFAULT_CUSTOMERS));
+  if (!getStored("dogamInventory")) setStored("dogamInventory", JSON.stringify(DEFAULT_INVENTORY));
+  if (!getStored("dogamChemicalDeliveries")) setStored("dogamChemicalDeliveries", JSON.stringify(DEFAULT_CHEMICAL_DELIVERIES));
+  if (!getStored("dogamAppointments")) setStored("dogamAppointments", JSON.stringify(DEFAULT_APPOINTMENTS));
+  if (!getStored("dogamRoutines")) setStored("dogamRoutines", JSON.stringify(DEFAULT_ROUTINES));
 }
 
 initializeDataStore();
@@ -285,6 +329,7 @@ let currentUser = loadCurrentUser();
 let deferredInstallPrompt = null;
 
 migrateStaffProfiles();
+normalizeMoneyRecords();
 
 const appShell = document.querySelector("#appShell");
 const loginScreen = document.querySelector("#loginScreen");
@@ -320,6 +365,9 @@ const chemicalList = document.querySelector("#chemicalList");
 const exportButton = document.querySelector("#exportButton");
 const importData = document.querySelector("#importData");
 const importButton = document.querySelector("#importButton");
+const editJobDialog = document.querySelector("#editJobDialog");
+const editJobForm = document.querySelector("#editJobForm");
+const editStaffSelect = document.querySelector("#editStaffSelect");
 
 function loadStaff() {
   return parseJson(getStored("dogamStaff"), DEFAULT_STAFF);
@@ -420,7 +468,39 @@ function formatDate(date) {
 }
 
 function formatMoney(value) {
-  return `${Number(value || 0).toLocaleString("tr-TR")}₺`;
+  return `${parseMoneyValue(value).toLocaleString("tr-TR")}₺`;
+}
+
+function parseMoneyValue(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? Math.round(value) : 0;
+
+  let text = String(value || "").trim().replace(/[₺\s]/g, "");
+  if (!text) return 0;
+
+  if (text.includes(".") && text.includes(",")) {
+    text = text.replace(/\./g, "").replace(",", ".");
+  } else if (text.includes(",")) {
+    text = text.replace(",", ".");
+  } else if ((text.match(/\./g) || []).length === 1 && /\.\d{3}$/.test(text)) {
+    text = text.replace(".", "");
+  }
+
+  const number = Number(text);
+  return Number.isFinite(number) ? Math.round(number) : 0;
+}
+
+function normalizeMoneyRecords() {
+  appointments = appointments.map((item) => ({
+    ...item,
+    amount: parseMoneyValue(item.amount),
+    paidAmount: parseMoneyValue(item.paidAmount),
+    debtAmount: parseMoneyValue(item.debtAmount),
+  }));
+
+  routines = routines.map((item) => ({
+    ...item,
+    amount: parseMoneyValue(item.amount),
+  }));
 }
 
 function addDays(date, days) {
@@ -485,6 +565,7 @@ function renderOptions() {
   staffAssignButtons.replaceChildren();
   routineStaffButtons.replaceChildren();
   chemicalStaffButtons.replaceChildren();
+  editStaffSelect.replaceChildren();
 
   staff.forEach((person) => {
     const button = createChoiceButton(person.name, person.role, person.name);
@@ -506,6 +587,7 @@ function renderOptions() {
 
   assignableStaff().forEach((person) => {
     staffFilter.append(new Option(person.name, person.name));
+    editStaffSelect.append(new Option(person.name, person.name));
 
     const filterButton = createChoiceButton(person.name, "Atanan işler", person.name);
     filterButton.addEventListener("click", () => {
@@ -673,6 +755,10 @@ function renderAppointments() {
     pill.textContent = statusLabels[appointment.status];
     pill.classList.add(`status-${appointment.status}`);
 
+    const editButton = card.querySelector("[data-edit-appointment]");
+    editButton.classList.toggle("is-hidden", !isManager());
+    editButton.addEventListener("click", () => openEditJob(appointment.id));
+
     const deleteButton = card.querySelector("[data-delete-appointment]");
     deleteButton.classList.toggle("is-hidden", !isManager());
     deleteButton.addEventListener("click", () => deleteAppointment(appointment.id));
@@ -699,7 +785,7 @@ function renderAppointments() {
 
     card.querySelectorAll("[data-payment]").forEach((button) => {
       button.addEventListener("click", () => {
-        const amount = Number(card.querySelector(".amount-input").value || appointment.amount || 0);
+        const amount = parseMoneyValue(card.querySelector(".amount-input").value || appointment.amount);
         completeAppointment(appointment.id, button.dataset.payment, amount);
       });
     });
@@ -831,15 +917,89 @@ function setupSignaturePad(canvas, onSave) {
   wrap.querySelector(".signature-save").addEventListener("click", () => onSave(canvas.toDataURL("image/png")));
 }
 
-function completeAppointment(id, paymentMethod, amount) {
+function openEditJob(id) {
+  if (!isManager()) return;
   const appointment = appointments.find((item) => item.id === id);
   if (!appointment) return;
 
-  appointment.status = "done";
+  renderOptions();
+  const fields = editJobForm.elements;
+  fields.id.value = appointment.id;
+  fields.customer.value = appointment.customer || "";
+  fields.phone.value = appointment.phone || "";
+  fields.address.value = appointment.address || "";
+  fields.date.value = appointment.date || todayIso();
+  fields.time.value = appointment.time || currentTime();
+  fields.service.value = appointment.service || "Haşere ilaçlama";
+  fields.amount.value = parseMoneyValue(appointment.amount);
+  fields.staff.value = validAssigneeName(appointment.staff) || assignableStaff()[0]?.name || "";
+  fields.status.value = appointment.status || "planned";
+  fields.note.value = appointment.note || "";
+
+  if (editJobDialog.showModal) {
+    editJobDialog.showModal();
+  } else {
+    editJobDialog.setAttribute("open", "");
+  }
+}
+
+function closeEditJob() {
+  editJobForm.reset();
+  if (editJobDialog.open) editJobDialog.close();
+  editJobDialog.removeAttribute("open");
+}
+
+function updateAppointmentFromEdit() {
+  if (!isManager()) return;
+
+  const data = new FormData(editJobForm);
+  const appointment = appointments.find((item) => item.id === data.get("id"));
+  const assignedStaff = validAssigneeName(data.get("staff"));
+  if (!appointment || !assignedStaff) return;
+
+  const previousStaff = appointment.staff;
+  const amount = parseMoneyValue(data.get("amount"));
+
+  appointment.customer = data.get("customer").trim();
+  appointment.phone = data.get("phone").trim();
+  appointment.address = data.get("address").trim();
+  appointment.date = data.get("date");
+  appointment.time = data.get("time");
+  appointment.service = data.get("service");
+  appointment.staff = assignedStaff;
+  appointment.note = data.get("note").trim();
   appointment.amount = amount;
+  appointment.status = data.get("status") || "planned";
+  appointment.updatedAt = new Date().toISOString();
+
+  if (appointment.paymentMethod === "cash" || appointment.paymentMethod === "iban") {
+    appointment.paidAmount = amount;
+    appointment.debtAmount = 0;
+  } else {
+    appointment.paidAmount = 0;
+    appointment.debtAmount = amount;
+  }
+
+  if (previousStaff !== assignedStaff) {
+    appointment.reassignedAt = new Date().toISOString();
+  }
+
+  ensureCustomer(appointment.customer, appointment.phone, appointment.address, appointment.note);
+  saveAppointments();
+  closeEditJob();
+  render();
+}
+
+function completeAppointment(id, paymentMethod, amount) {
+  const appointment = appointments.find((item) => item.id === id);
+  if (!appointment) return;
+  const cleanAmount = parseMoneyValue(amount);
+
+  appointment.status = "done";
+  appointment.amount = cleanAmount;
   appointment.paymentMethod = paymentMethod;
-  appointment.paidAmount = paymentMethod === "debt" ? 0 : amount;
-  appointment.debtAmount = paymentMethod === "debt" ? amount : 0;
+  appointment.paidAmount = paymentMethod === "debt" ? 0 : cleanAmount;
+  appointment.debtAmount = paymentMethod === "debt" ? cleanAmount : 0;
   appointment.completedBy = currentUser.name;
   appointment.completedAt = new Date().toISOString();
   saveAppointments();
@@ -990,11 +1150,11 @@ function completeRoutine(id, paymentMethod) {
     service: routine.service,
     staff: routine.staff,
     note: `Rutin iş tamamlandı. ${routine.note || ""}`.trim(),
-    amount: Number(routine.amount || 0),
+    amount: parseMoneyValue(routine.amount),
     status: "done",
     paymentMethod,
-    paidAmount: paymentMethod === "debt" ? 0 : Number(routine.amount || 0),
-    debtAmount: paymentMethod === "debt" ? Number(routine.amount || 0) : 0,
+    paidAmount: paymentMethod === "debt" ? 0 : parseMoneyValue(routine.amount),
+    debtAmount: paymentMethod === "debt" ? parseMoneyValue(routine.amount) : 0,
     completedBy: currentUser.name,
     completedAt: new Date().toISOString(),
     photos: [],
@@ -1012,8 +1172,8 @@ function renderCustomers() {
 
   customers.forEach((customer) => {
     const history = appointments.filter((item) => item.customer === customer.name);
-    const debt = history.reduce((total, item) => total + Number(item.debtAmount || 0), 0);
-    const paid = history.reduce((total, item) => total + Number(item.paidAmount || 0), 0);
+    const debt = history.reduce((total, item) => total + parseMoneyValue(item.debtAmount), 0);
+    const paid = history.reduce((total, item) => total + parseMoneyValue(item.paidAmount), 0);
     const card = document.createElement("article");
     card.className = "appointment-card";
     card.innerHTML = `
@@ -1038,9 +1198,9 @@ function renderCustomers() {
 function renderReports() {
   const totalJobs = appointments.length;
   const doneJobs = appointments.filter((item) => item.status === "done").length;
-  const cash = appointments.filter((item) => item.paymentMethod === "cash").reduce((sum, item) => sum + Number(item.paidAmount || 0), 0);
-  const iban = appointments.filter((item) => item.paymentMethod === "iban").reduce((sum, item) => sum + Number(item.paidAmount || 0), 0);
-  const debt = appointments.reduce((sum, item) => sum + Number(item.debtAmount || 0), 0);
+  const cash = appointments.filter((item) => item.paymentMethod === "cash").reduce((sum, item) => sum + parseMoneyValue(item.paidAmount), 0);
+  const iban = appointments.filter((item) => item.paymentMethod === "iban").reduce((sum, item) => sum + parseMoneyValue(item.paidAmount), 0);
+  const debt = appointments.reduce((sum, item) => sum + parseMoneyValue(item.debtAmount), 0);
   const dueRoutineCount = routines.filter((item) => item.nextDate <= todayIso()).length;
   const totalLiquid = chemicalDeliveries.reduce((sum, item) => sum + Number(item.liquid || 0), 0);
   const totalGel = chemicalDeliveries.reduce((sum, item) => sum + Number(item.gel || 0), 0);
@@ -1149,7 +1309,7 @@ function formatChemicalTotals(totals) {
 
 function renderSummary() {
   const visible = visibleAppointments();
-  const revenue = visible.reduce((sum, item) => sum + Number(item.paidAmount || 0), 0);
+  const revenue = visible.reduce((sum, item) => sum + parseMoneyValue(item.paidAmount), 0);
   document.querySelector("#todayCount").textContent = visible.filter((item) => item.date === todayIso()).length;
   document.querySelector("#openCount").textContent = visible.filter((item) => item.status !== "done").length;
   document.querySelector("#doneCount").textContent = visible.filter((item) => item.status === "done").length;
@@ -1178,8 +1338,25 @@ function maybeNotifyDueItems() {
   if (!currentUser || !("Notification" in window) || Notification.permission !== "granted") return;
 
   const notified = parseJson(getStored("dogamNotifications"), []);
+  const assignmentNotified = parseJson(getStored("dogamAssignmentNotifications"), []);
+  const assignedJobs = appointments.filter(
+    (item) =>
+      item.staff === currentUser.name &&
+      item.status !== "done" &&
+      (item.createdAt || item.reassignedAt),
+  );
   const dueRoutines = visibleRoutines().filter((routine) => routine.nextDate <= todayIso());
   const dueJobs = visibleAppointments().filter((item) => item.date === todayIso() && item.status !== "done");
+
+  assignedJobs.forEach((item) => {
+    const key = `${currentUser.name}:assignment:${item.id}:${item.reassignedAt || item.createdAt}`;
+    if (assignmentNotified.includes(key)) return;
+
+    new Notification("Yeni işiniz var", {
+      body: `${item.customer} - ${formatDate(item.date)} ${item.time || ""}`,
+    });
+    assignmentNotified.push(key);
+  });
 
   [...dueRoutines, ...dueJobs].forEach((item) => {
     const key = `${currentUser.name}:${item.id}:${item.nextDate || item.date}`;
@@ -1191,6 +1368,7 @@ function maybeNotifyDueItems() {
     notified.push(key);
   });
 
+  setStored("dogamAssignmentNotifications", JSON.stringify(assignmentNotified));
   setStored("dogamNotifications", JSON.stringify(notified));
 }
 
@@ -1203,6 +1381,7 @@ function render() {
   renderStock();
   renderStaff();
   renderNotificationButton();
+  maybeNotifyDueItems();
 }
 
 document.querySelectorAll(".tab").forEach((tab) => {
@@ -1259,6 +1438,16 @@ logoutButton.addEventListener("click", () => {
 statusFilter.addEventListener("change", render);
 staffFilter.addEventListener("change", render);
 
+editJobForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  updateAppointmentFromEdit();
+});
+
+editJobDialog.querySelector(".dialog-close").addEventListener("click", closeEditJob);
+editJobDialog.addEventListener("click", (event) => {
+  if (event.target === editJobDialog) closeEditJob();
+});
+
 form.addEventListener("submit", (event) => {
   event.preventDefault();
   if (!isManager()) return;
@@ -1266,6 +1455,7 @@ form.addEventListener("submit", (event) => {
   const data = new FormData(form);
   const assignedStaff = validAssigneeName(data.get("staff"));
   if (!assignedStaff) return;
+  const amount = parseMoneyValue(data.get("amount"));
 
   ensureCustomer(data.get("customer"), data.get("phone"), data.get("address"), data.get("note"));
   appointments.push({
@@ -1278,13 +1468,15 @@ form.addEventListener("submit", (event) => {
     service: data.get("service"),
     staff: assignedStaff,
     note: data.get("note").trim(),
-    amount: Number(data.get("amount") || 0),
+    amount,
     status: "planned",
     paymentMethod: "",
     paidAmount: 0,
-    debtAmount: Number(data.get("amount") || 0),
+    debtAmount: amount,
     photos: [],
     stockUsage: [],
+    createdAt: new Date().toISOString(),
+    createdBy: currentUser.name,
   });
   saveAppointments();
   form.reset();
@@ -1320,6 +1512,7 @@ routineForm.addEventListener("submit", (event) => {
   const data = new FormData(routineForm);
   const assignedStaff = validAssigneeName(data.get("staff"));
   if (!assignedStaff) return;
+  const amount = parseMoneyValue(data.get("amount"));
 
   ensureCustomer(data.get("customer"), "", data.get("address"), data.get("note"));
   routines.push({
@@ -1331,7 +1524,7 @@ routineForm.addEventListener("submit", (event) => {
     staff: assignedStaff,
     frequencyDays: Number(data.get("frequencyDays")) || 30,
     nextDate: data.get("nextDate"),
-    amount: Number(data.get("amount") || 0),
+    amount,
     note: data.get("note").trim(),
     lastCompleted: "",
     lastPaymentMethod: "",
@@ -1448,7 +1641,7 @@ document.querySelector("#installButton").addEventListener("click", async () => {
 });
 
 if ("serviceWorker" in navigator && location.protocol !== "file:") {
-  navigator.serviceWorker.register("service-worker.js");
+  navigator.serviceWorker.register("service-worker.js?v=22").then((registration) => registration.update());
 }
 
 try {
@@ -1460,7 +1653,7 @@ try {
 }
 
 async function refreshFromServer() {
-  if (!serverAvailable || document.hidden) return;
+  if (!SERVER_MODE || document.hidden) return;
   const activeView = document.querySelector(".tab.active")?.dataset.view;
   const activeFilter = staffFilter.value;
 
@@ -1472,6 +1665,11 @@ async function refreshFromServer() {
     render();
   }
 }
+
+window.addEventListener("pageshow", refreshFromServer);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) refreshFromServer();
+});
 
 async function bootApp() {
   await pullServerData();

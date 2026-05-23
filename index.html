@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#111412" />
     <title>Doğam Böcek İlaçlama</title>
-    <link rel="manifest" href="manifest.json?v=18" />
+    <link rel="manifest" href="manifest.json?v=22" />
     <link rel="icon" href="icon-512.png" />
     <link rel="apple-touch-icon" href="apple-touch-icon.png" />
-    <link rel="stylesheet" href="styles.css?v=16" />
+    <link rel="stylesheet" href="styles.css?v=22" />
   </head>
   <body>
     <section class="login-screen" id="loginScreen">
@@ -138,7 +138,7 @@
               </label>
               <label>
                 Tutar
-                <input name="amount" type="number" min="0" inputmode="decimal" placeholder="0" />
+                <input name="amount" type="number" min="0" step="1" inputmode="numeric" placeholder="0" />
               </label>
             </div>
             <div class="choice-field">
@@ -195,7 +195,7 @@
               </label>
               <label>
                 Tutar
-                <input name="amount" type="number" min="0" inputmode="decimal" placeholder="0" />
+                <input name="amount" type="number" min="0" step="1" inputmode="numeric" placeholder="0" />
               </label>
             </div>
             <div class="choice-field">
@@ -301,6 +301,70 @@
       </main>
     </div>
 
+    <dialog class="edit-dialog" id="editJobDialog">
+      <form id="editJobForm" class="form-card edit-card" action="javascript:void(0)" onsubmit="return false">
+        <div class="section-head">
+          <h2>İşi Düzenle</h2>
+          <button class="secondary-button dialog-close" type="button">Kapat</button>
+        </div>
+        <input name="id" type="hidden" />
+        <label>
+          Müşteri adı
+          <input name="customer" required />
+        </label>
+        <label>
+          Telefon
+          <input name="phone" inputmode="tel" />
+        </label>
+        <label>
+          Adres
+          <textarea name="address" required rows="3"></textarea>
+        </label>
+        <div class="form-row">
+          <label>
+            Tarih
+            <input name="date" type="date" required />
+          </label>
+          <label>
+            Saat
+            <input name="time" type="time" required />
+          </label>
+        </div>
+        <div class="form-row">
+          <label>
+            İşlem
+            <select name="service">
+              <option>Haşere ilaçlama</option>
+              <option>Fare mücadelesi</option>
+              <option>Genel kontrol</option>
+              <option>Periyodik servis</option>
+            </select>
+          </label>
+          <label>
+            Tutar
+            <input name="amount" type="number" min="0" step="1" inputmode="numeric" />
+          </label>
+        </div>
+        <label>
+          Personel
+          <select name="staff" id="editStaffSelect" required></select>
+        </label>
+        <label>
+          Durum
+          <select name="status">
+            <option value="planned">Planlandı</option>
+            <option value="active">Sahada</option>
+            <option value="done">Tamamlandı</option>
+          </select>
+        </label>
+        <label>
+          Not
+          <textarea name="note" rows="3"></textarea>
+        </label>
+        <button class="primary-button" type="submit">Değişiklikleri Kaydet</button>
+      </form>
+    </dialog>
+
     <template id="appointmentTemplate">
       <article class="appointment-card">
         <div class="card-head">
@@ -310,6 +374,7 @@
           </div>
           <div class="card-tools">
             <span class="status-pill"></span>
+            <button class="edit-job-button manager-only" data-edit-appointment type="button">Düzenle</button>
             <button class="delete-job-button manager-only" data-delete-appointment type="button">Sil</button>
           </div>
         </div>
@@ -328,7 +393,7 @@
           <div class="form-row">
             <label>
               Tutar
-              <input class="amount-input" type="number" min="0" inputmode="decimal" />
+              <input class="amount-input" type="number" min="0" step="1" inputmode="numeric" />
             </label>
             <label>
               Stok
@@ -386,6 +451,6 @@
       </article>
     </template>
 
-    <script src="app.js?v=17"></script>
+    <script src="app.js?v=22"></script>
   </body>
 </html>
