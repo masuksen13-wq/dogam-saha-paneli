@@ -29,22 +29,7 @@ function createId() {
   return `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-const DEFAULT_CUSTOMERS = [
-  {
-    id: createId(),
-    name: "Murat Kaya",
-    phone: "0532 111 22 33",
-    address: "Cumhuriyet Mah. 1402 Sok. No: 8 Daire: 5",
-    note: "Mutfak ve banyo giderleri hassas.",
-  },
-  {
-    id: createId(),
-    name: "Ece Apartmanı",
-    phone: "0544 222 33 44",
-    address: "Atatürk Cad. No: 21 bina girişi",
-    note: "Bodrum katta yoğunluk var.",
-  },
-];
+const DEFAULT_CUSTOMERS = [];
 
 const DEFAULT_INVENTORY = [
   { id: createId(), name: "Jel yem", quantity: 24, unit: "adet" },
@@ -52,80 +37,11 @@ const DEFAULT_INVENTORY = [
   { id: createId(), name: "Genel ilaç", quantity: 8, unit: "litre" },
 ];
 
-const DEFAULT_CHEMICAL_DELIVERIES = [
-  {
-    id: createId(),
-    staff: "Ali",
-    liquid: 2,
-    gel: 150,
-    note: "Haftalık saha çıkışı",
-    date: new Date().toISOString(),
-  },
-  {
-    id: createId(),
-    staff: "Servet Yılmaz",
-    liquid: 3,
-    gel: 200,
-    note: "Rutin servisler için verildi",
-    date: new Date().toISOString(),
-  },
-];
+const DEFAULT_CHEMICAL_DELIVERIES = [];
 
-const DEFAULT_APPOINTMENTS = [
-  {
-    id: createId(),
-    customer: "Murat Kaya",
-    phone: "0532 111 22 33",
-    address: "Cumhuriyet Mah. 1402 Sok. No: 8 Daire: 5",
-    date: new Date().toISOString().slice(0, 10),
-    time: "10:30",
-    service: "Haşere ilaçlama",
-    staff: "Ali",
-    note: "Mutfak ve banyo giderleri özellikle kontrol edilecek.",
-    amount: 1500,
-    status: "planned",
-    paymentMethod: "",
-    paidAmount: 0,
-    debtAmount: 1500,
-    photos: [],
-    stockUsage: [],
-  },
-  {
-    id: createId(),
-    customer: "Ece Apartmanı",
-    phone: "0544 222 33 44",
-    address: "Atatürk Cad. No: 21 bina girişi",
-    date: new Date().toISOString().slice(0, 10),
-    time: "14:00",
-    service: "Periyodik servis",
-    staff: "Servet Yılmaz",
-    note: "Yönetici kapıda karşılayacak.",
-    amount: 2500,
-    status: "active",
-    paymentMethod: "",
-    paidAmount: 0,
-    debtAmount: 2500,
-    photos: [],
-    stockUsage: [],
-  },
-];
+const DEFAULT_APPOINTMENTS = [];
 
-const DEFAULT_ROUTINES = [
-  {
-    id: createId(),
-    title: "Ece Apartmanı aylık servis",
-    customer: "Ece Apartmanı",
-    address: "Atatürk Cad. No: 21 bina girişi",
-    service: "Periyodik servis",
-    staff: "Servet Yılmaz",
-    frequencyDays: 30,
-    nextDate: new Date().toISOString().slice(0, 10),
-    amount: 2500,
-    note: "Bodrum ve ortak alanlar kontrol edilecek.",
-    lastCompleted: "",
-    lastPaymentMethod: "",
-  },
-];
+const DEFAULT_ROUTINES = [];
 
 function getStored(key) {
   try {
@@ -195,6 +111,7 @@ function applyDataBundle(data) {
   appointments = Array.isArray(data.appointments) ? data.appointments : appointments;
   routines = Array.isArray(data.routines) ? data.routines : routines;
   normalizeMoneyRecords();
+  cleanupDemoData();
 }
 
 function compactBundle(data) {
@@ -208,12 +125,22 @@ function compactBundle(data) {
   };
 }
 
+function recordTimestamp(item) {
+  const value = item?.deletedAt || item?.updatedAt || item?.completedAt || item?.reassignedAt || item?.createdAt || item?.lastCompleted || 0;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
 function mergeByKey(serverItems, localItems, keySelector) {
   const merged = new Map();
 
   [...serverItems, ...localItems].forEach((item, index) => {
     const key = keySelector(item) || `item-${index}-${JSON.stringify(item)}`;
-    merged.set(key, item);
+    const existing = merged.get(key);
+
+    if (!existing || recordTimestamp(item) >= recordTimestamp(existing)) {
+      merged.set(key, item);
+    }
   });
 
   return [...merged.values()];
@@ -269,8 +196,9 @@ async function pullServerData() {
     serverAvailable = true;
     applyDataBundle(mergedData);
     const migrated = migrateStaffProfiles();
+    const cleaned = cleanupDemoData();
     persistLocalSnapshot();
-    if (shouldRepairServer || migrated) scheduleServerSave();
+    if (shouldRepairServer || migrated || cleaned) scheduleServerSave();
     return true;
   } catch {
     serverAvailable = false;
@@ -288,22 +216,25 @@ function persistLocalSnapshot() {
   setStored("dogamRoutines", JSON.stringify(routines));
 }
 
-function scheduleServerSave() {
-  if (!serverAvailable) return;
+function scheduleServerSave(delay = 350) {
+  if (!SERVER_MODE) return;
   clearTimeout(syncTimer);
-  syncTimer = setTimeout(pushServerData, 350);
+  syncTimer = setTimeout(pushServerData, delay);
 }
 
 async function pushServerData() {
-  if (!serverAvailable) return;
+  if (!SERVER_MODE) return false;
 
   try {
     await apiRequest("/api/data", {
       method: "POST",
       body: JSON.stringify(currentDataBundle()),
     });
+    serverAvailable = true;
+    return true;
   } catch {
     serverAvailable = false;
+    return false;
   }
 }
 
@@ -330,6 +261,7 @@ let deferredInstallPrompt = null;
 
 migrateStaffProfiles();
 normalizeMoneyRecords();
+cleanupDemoData();
 
 const appShell = document.querySelector("#appShell");
 const loginScreen = document.querySelector("#loginScreen");
@@ -409,18 +341,18 @@ function loadAppointments() {
   return parseJson(getStored("dogamAppointments"), DEFAULT_APPOINTMENTS);
 }
 
-function saveAppointments() {
+function saveAppointments(options = {}) {
   setStored("dogamAppointments", JSON.stringify(appointments));
-  scheduleServerSave();
+  scheduleServerSave(options.immediate ? 0 : 350);
 }
 
 function loadRoutines() {
   return parseJson(getStored("dogamRoutines"), DEFAULT_ROUTINES);
 }
 
-function saveRoutines() {
+function saveRoutines(options = {}) {
   setStored("dogamRoutines", JSON.stringify(routines));
-  scheduleServerSave();
+  scheduleServerSave(options.immediate ? 0 : 350);
 }
 
 function loadCurrentUser() {
@@ -501,6 +433,60 @@ function normalizeMoneyRecords() {
     ...item,
     amount: parseMoneyValue(item.amount),
   }));
+}
+
+function isDemoCustomerName(value) {
+  const name = String(value || "").toLocaleLowerCase("tr-TR");
+  return name === "murat kaya" || name === "ece apartmanı" || name === "ece apartmani";
+}
+
+function isDemoAppointment(item) {
+  const id = String(item.id || "");
+  const customer = String(item.customer || "").toLocaleLowerCase("tr-TR");
+  const phone = String(item.phone || "");
+  const address = String(item.address || "").toLocaleLowerCase("tr-TR");
+  const note = String(item.note || "").toLocaleLowerCase("tr-TR");
+
+  return (
+    id === "job-murat" ||
+    (customer === "murat kaya" &&
+      phone === "0532 111 22 33" &&
+      address.includes("cumhuriyet mah") &&
+      note.includes("mutfak ve banyo")) ||
+    (customer.includes("ece apartman") &&
+      phone === "0544 222 33 44" &&
+      address.includes("atatürk cad") &&
+      note.includes("yönetici kapıda"))
+  );
+}
+
+function isDemoRoutine(item) {
+  const id = String(item.id || "");
+  const title = String(item.title || "").toLocaleLowerCase("tr-TR");
+  const customer = String(item.customer || "").toLocaleLowerCase("tr-TR");
+  const address = String(item.address || "").toLocaleLowerCase("tr-TR");
+
+  return id === "routine-ece" || (title.includes("ece apartman") && customer.includes("ece apartman") && address.includes("atatürk cad"));
+}
+
+function isDemoChemicalDelivery(item) {
+  const id = String(item.id || "");
+  const note = String(item.note || "").toLocaleLowerCase("tr-TR");
+  return id === "delivery-ali" || id === "delivery-servet" || note.includes("haftalık saha çıkışı") || note.includes("rutin servisler için verildi");
+}
+
+function cleanupDemoData() {
+  const before = JSON.stringify({ customers, appointments, routines, chemicalDeliveries });
+
+  appointments = appointments.filter((item) => !isDemoAppointment(item));
+  routines = routines.filter((item) => !isDemoRoutine(item));
+  chemicalDeliveries = chemicalDeliveries.filter((item) => !isDemoChemicalDelivery(item));
+  customers = customers.filter((customer) => {
+    if (!isDemoCustomerName(customer.name)) return true;
+    return appointments.some((item) => item.customer === customer.name) || routines.some((item) => item.customer === customer.name);
+  });
+
+  return before !== JSON.stringify({ customers, appointments, routines, chemicalDeliveries });
 }
 
 function addDays(date, days) {
@@ -702,10 +688,15 @@ function renderAuthState() {
   loginScreen.classList.remove("is-hidden");
 }
 
+function activeAppointments() {
+  return appointments.filter((item) => !item.deletedAt);
+}
+
 function visibleAppointments() {
   if (!currentUser) return [];
-  if (!isManager()) return appointments.filter((item) => item.staff === currentUser.name);
-  return staffFilter.value === "all" ? appointments : appointments.filter((item) => item.staff === staffFilter.value);
+  const jobs = activeAppointments();
+  if (!isManager()) return jobs.filter((item) => item.staff === currentUser.name);
+  return staffFilter.value === "all" ? jobs : jobs.filter((item) => item.staff === staffFilter.value);
 }
 
 function visibleRoutines() {
@@ -771,14 +762,16 @@ function renderAppointments() {
     renderStockSelect(card.querySelector(".stock-select"));
     setupSignaturePad(card.querySelector(".signature-pad"), (signature) => {
       appointment.signature = signature;
-      saveAppointments();
+      appointment.updatedAt = new Date().toISOString();
+      saveAppointments({ immediate: true });
       render();
     });
 
     card.querySelectorAll("[data-action]").forEach((button) => {
       button.addEventListener("click", () => {
         appointment.status = button.dataset.action;
-        saveAppointments();
+        appointment.updatedAt = new Date().toISOString();
+        saveAppointments({ immediate: true });
         render();
       });
     });
@@ -985,7 +978,7 @@ function updateAppointmentFromEdit() {
   }
 
   ensureCustomer(appointment.customer, appointment.phone, appointment.address, appointment.note);
-  saveAppointments();
+  saveAppointments({ immediate: true });
   closeEditJob();
   render();
 }
@@ -1002,7 +995,8 @@ function completeAppointment(id, paymentMethod, amount) {
   appointment.debtAmount = paymentMethod === "debt" ? cleanAmount : 0;
   appointment.completedBy = currentUser.name;
   appointment.completedAt = new Date().toISOString();
-  saveAppointments();
+  appointment.updatedAt = appointment.completedAt;
+  saveAppointments({ immediate: true });
   render();
 }
 
@@ -1014,8 +1008,11 @@ function deleteAppointment(id) {
   const message = `${appointment.customer} işini silmek istiyor musunuz?`;
   if (!confirm(message)) return;
 
-  appointments = appointments.filter((item) => item.id !== id);
-  saveAppointments();
+  appointment.status = "deleted";
+  appointment.deletedAt = new Date().toISOString();
+  appointment.updatedAt = appointment.deletedAt;
+  appointment.deletedBy = currentUser.name;
+  saveAppointments({ immediate: true });
   render();
 }
 
@@ -1030,12 +1027,14 @@ function captureLocation(id) {
         lng: position.coords.longitude.toFixed(6),
         at: new Date().toISOString(),
       };
-      saveAppointments();
+      appointment.updatedAt = new Date().toISOString();
+      saveAppointments({ immediate: true });
       render();
     },
     () => {
       appointment.locationError = "Konum alınamadı";
-      saveAppointments();
+      appointment.updatedAt = new Date().toISOString();
+      saveAppointments({ immediate: true });
       render();
     },
     { enableHighAccuracy: true, timeout: 10000 },
@@ -1069,7 +1068,8 @@ function addPhoto(id, file) {
 function savePhoto(appointment, dataUrl) {
   appointment.photos = appointment.photos || [];
   appointment.photos.push({ id: createId(), dataUrl, at: new Date().toISOString() });
-  saveAppointments();
+  appointment.updatedAt = new Date().toISOString();
+  saveAppointments({ immediate: true });
   render();
 }
 
@@ -1083,8 +1083,9 @@ function useStock(appointmentId, stockId, quantity) {
   item.quantity = Math.max(0, item.quantity - used);
   appointment.stockUsage = appointment.stockUsage || [];
   appointment.stockUsage.push({ id: item.id, name: item.name, quantity: used, unit: item.unit });
+  appointment.updatedAt = new Date().toISOString();
   saveInventory();
-  saveAppointments();
+  saveAppointments({ immediate: true });
   render();
 }
 
@@ -1135,10 +1136,12 @@ function completeRoutine(id, paymentMethod) {
   const routine = routines.find((item) => item.id === id);
   if (!routine) return;
 
-  routine.lastCompleted = new Date().toISOString();
+  const completedAt = new Date().toISOString();
+  routine.lastCompleted = completedAt;
   routine.lastPaymentMethod = paymentMethod;
   routine.completedBy = currentUser.name;
   routine.nextDate = addDays(todayIso(), routine.frequencyDays);
+  routine.updatedAt = completedAt;
 
   appointments.push({
     id: createId(),
@@ -1156,14 +1159,16 @@ function completeRoutine(id, paymentMethod) {
     paidAmount: paymentMethod === "debt" ? 0 : parseMoneyValue(routine.amount),
     debtAmount: paymentMethod === "debt" ? parseMoneyValue(routine.amount) : 0,
     completedBy: currentUser.name,
-    completedAt: new Date().toISOString(),
+    completedAt,
+    updatedAt: completedAt,
+    createdAt: completedAt,
     photos: [],
     stockUsage: [],
   });
 
   ensureCustomer(routine.customer, "", routine.address, routine.note);
-  saveRoutines();
-  saveAppointments();
+  saveRoutines({ immediate: true });
+  saveAppointments({ immediate: true });
   render();
 }
 
@@ -1171,7 +1176,7 @@ function renderCustomers() {
   customerList.replaceChildren();
 
   customers.forEach((customer) => {
-    const history = appointments.filter((item) => item.customer === customer.name);
+    const history = activeAppointments().filter((item) => item.customer === customer.name);
     const debt = history.reduce((total, item) => total + parseMoneyValue(item.debtAmount), 0);
     const paid = history.reduce((total, item) => total + parseMoneyValue(item.paidAmount), 0);
     const card = document.createElement("article");
@@ -1196,21 +1201,22 @@ function renderCustomers() {
 }
 
 function renderReports() {
-  const totalJobs = appointments.length;
-  const doneJobs = appointments.filter((item) => item.status === "done").length;
-  const cash = appointments.filter((item) => item.paymentMethod === "cash").reduce((sum, item) => sum + parseMoneyValue(item.paidAmount), 0);
-  const iban = appointments.filter((item) => item.paymentMethod === "iban").reduce((sum, item) => sum + parseMoneyValue(item.paidAmount), 0);
-  const debt = appointments.reduce((sum, item) => sum + parseMoneyValue(item.debtAmount), 0);
+  const jobs = activeAppointments();
+  const totalJobs = jobs.length;
+  const doneJobs = jobs.filter((item) => item.status === "done").length;
+  const cash = jobs.filter((item) => item.paymentMethod === "cash").reduce((sum, item) => sum + parseMoneyValue(item.paidAmount), 0);
+  const iban = jobs.filter((item) => item.paymentMethod === "iban").reduce((sum, item) => sum + parseMoneyValue(item.paidAmount), 0);
+  const debt = jobs.reduce((sum, item) => sum + parseMoneyValue(item.debtAmount), 0);
   const dueRoutineCount = routines.filter((item) => item.nextDate <= todayIso()).length;
   const totalLiquid = chemicalDeliveries.reduce((sum, item) => sum + Number(item.liquid || 0), 0);
   const totalGel = chemicalDeliveries.reduce((sum, item) => sum + Number(item.gel || 0), 0);
 
   const staffRows = assignableStaff()
     .map((person) => {
-      const jobs = appointments.filter((item) => item.staff === person.name);
-      const completed = jobs.filter((item) => item.status === "done").length;
+      const staffJobs = jobs.filter((item) => item.staff === person.name);
+      const completed = staffJobs.filter((item) => item.status === "done").length;
       const supplies = staffChemicalTotals(person.name);
-      return `<p><strong>${person.name}</strong> ${completed}/${jobs.length} iş - ${formatChemicalTotals(supplies)}</p>`;
+      return `<p><strong>${person.name}</strong> ${completed}/${staffJobs.length} iş - ${formatChemicalTotals(supplies)}</p>`;
     })
     .join("");
 
@@ -1273,7 +1279,7 @@ function renderStaff() {
   staffList.replaceChildren();
 
   assignableStaff().forEach((person) => {
-    const openJobs = appointments.filter((item) => item.staff === person.name && item.status !== "done").length;
+    const openJobs = activeAppointments().filter((item) => item.staff === person.name && item.status !== "done").length;
     const routineJobs = routines.filter((item) => item.staff === person.name).length;
     const supplies = staffChemicalTotals(person.name);
     const card = document.createElement("article");
@@ -1339,7 +1345,7 @@ function maybeNotifyDueItems() {
 
   const notified = parseJson(getStored("dogamNotifications"), []);
   const assignmentNotified = parseJson(getStored("dogamAssignmentNotifications"), []);
-  const assignedJobs = appointments.filter(
+  const assignedJobs = activeAppointments().filter(
     (item) =>
       item.staff === currentUser.name &&
       item.status !== "done" &&
@@ -1456,6 +1462,7 @@ form.addEventListener("submit", (event) => {
   const assignedStaff = validAssigneeName(data.get("staff"));
   if (!assignedStaff) return;
   const amount = parseMoneyValue(data.get("amount"));
+  const createdAt = new Date().toISOString();
 
   ensureCustomer(data.get("customer"), data.get("phone"), data.get("address"), data.get("note"));
   appointments.push({
@@ -1475,10 +1482,11 @@ form.addEventListener("submit", (event) => {
     debtAmount: amount,
     photos: [],
     stockUsage: [],
-    createdAt: new Date().toISOString(),
+    createdAt,
+    updatedAt: createdAt,
     createdBy: currentUser.name,
   });
-  saveAppointments();
+  saveAppointments({ immediate: true });
   form.reset();
   setDefaultChoices();
   document.querySelector('[data-view="appointments"]').click();
@@ -1513,6 +1521,7 @@ routineForm.addEventListener("submit", (event) => {
   const assignedStaff = validAssigneeName(data.get("staff"));
   if (!assignedStaff) return;
   const amount = parseMoneyValue(data.get("amount"));
+  const createdAt = new Date().toISOString();
 
   ensureCustomer(data.get("customer"), "", data.get("address"), data.get("note"));
   routines.push({
@@ -1528,8 +1537,10 @@ routineForm.addEventListener("submit", (event) => {
     note: data.get("note").trim(),
     lastCompleted: "",
     lastPaymentMethod: "",
+    createdAt,
+    updatedAt: createdAt,
   });
-  saveRoutines();
+  saveRoutines({ immediate: true });
   routineForm.reset();
   setDefaultChoices();
   render();
@@ -1641,7 +1652,7 @@ document.querySelector("#installButton").addEventListener("click", async () => {
 });
 
 if ("serviceWorker" in navigator && location.protocol !== "file:") {
-  navigator.serviceWorker.register("service-worker.js?v=22").then((registration) => registration.update());
+  navigator.serviceWorker.register("service-worker.js?v=24").then((registration) => registration.update());
 }
 
 try {

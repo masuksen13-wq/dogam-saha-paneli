@@ -1,4 +1,4 @@
-const CACHE_NAME = "dogam-randevu-v22";
+const CACHE_NAME = "dogam-randevu-v24";
 const ASSETS = [
   "./",
   "index.html",

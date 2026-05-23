@@ -17,81 +17,15 @@ const defaults = {
     { name: "Ali", pin: "2222", role: "Personel", type: "personnel" },
     { name: "Servet Yılmaz", pin: "3333", role: "Personel", type: "personnel" },
   ],
-  customers: [
-    {
-      id: "customer-murat",
-      name: "Murat Kaya",
-      phone: "0532 111 22 33",
-      address: "Cumhuriyet Mah. 1402 Sok. No: 8 Daire: 5",
-      note: "Mutfak ve banyo giderleri hassas.",
-    },
-    {
-      id: "customer-ece",
-      name: "Ece Apartmanı",
-      phone: "0544 222 33 44",
-      address: "Atatürk Cad. No: 21 bina girişi",
-      note: "Bodrum katta yoğunluk var.",
-    },
-  ],
+  customers: [],
   inventory: [
     { id: "stock-jel", name: "Jel yem", quantity: 24, unit: "adet" },
     { id: "stock-istasyon", name: "Fare yem istasyonu", quantity: 12, unit: "adet" },
     { id: "stock-ilac", name: "Genel ilaç", quantity: 8, unit: "litre" },
   ],
-  chemicalDeliveries: [
-    {
-      id: "delivery-ali",
-      staff: "Ali",
-      liquid: 2,
-      gel: 150,
-      note: "Haftalık saha çıkışı",
-      date: new Date().toISOString(),
-    },
-    {
-      id: "delivery-servet",
-      staff: "Servet Yılmaz",
-      liquid: 3,
-      gel: 200,
-      note: "Rutin servisler için verildi",
-      date: new Date().toISOString(),
-    },
-  ],
-  appointments: [
-    {
-      id: "job-murat",
-      customer: "Murat Kaya",
-      phone: "0532 111 22 33",
-      address: "Cumhuriyet Mah. 1402 Sok. No: 8 Daire: 5",
-      date: new Date().toISOString().slice(0, 10),
-      time: "10:30",
-      service: "Haşere ilaçlama",
-      staff: "Ali",
-      note: "Mutfak ve banyo giderleri özellikle kontrol edilecek.",
-      amount: 1500,
-      status: "planned",
-      paymentMethod: "",
-      paidAmount: 0,
-      debtAmount: 1500,
-      photos: [],
-      stockUsage: [],
-    },
-  ],
-  routines: [
-    {
-      id: "routine-ece",
-      title: "Ece Apartmanı aylık servis",
-      customer: "Ece Apartmanı",
-      address: "Atatürk Cad. No: 21 bina girişi",
-      service: "Periyodik servis",
-      staff: "Servet Yılmaz",
-      frequencyDays: 30,
-      nextDate: new Date().toISOString().slice(0, 10),
-      amount: 2500,
-      note: "Bodrum ve ortak alanlar kontrol edilecek.",
-      lastCompleted: "",
-      lastPaymentMethod: "",
-    },
-  ],
+  chemicalDeliveries: [],
+  appointments: [],
+  routines: [],
 };
 
 const mimeTypes = {
@@ -136,6 +70,52 @@ function writeJson(filePath, value) {
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+function compactBundle(data) {
+  return {
+    staff: Array.isArray(data.staff) ? data.staff : [],
+    customers: Array.isArray(data.customers) ? data.customers : [],
+    inventory: Array.isArray(data.inventory) ? data.inventory : [],
+    chemicalDeliveries: Array.isArray(data.chemicalDeliveries) ? data.chemicalDeliveries : [],
+    appointments: Array.isArray(data.appointments) ? data.appointments : [],
+    routines: Array.isArray(data.routines) ? data.routines : [],
+  };
+}
+
+function recordTimestamp(item) {
+  const value = item?.deletedAt || item?.updatedAt || item?.completedAt || item?.reassignedAt || item?.createdAt || item?.lastCompleted || 0;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function mergeByKey(currentItems, incomingItems, keySelector) {
+  const merged = new Map();
+
+  [...currentItems, ...incomingItems].forEach((item, index) => {
+    const key = keySelector(item) || `item-${index}-${JSON.stringify(item)}`;
+    const existing = merged.get(key);
+
+    if (!existing || recordTimestamp(item) >= recordTimestamp(existing)) {
+      merged.set(key, item);
+    }
+  });
+
+  return [...merged.values()];
+}
+
+function mergeDataBundles(currentData, incomingData) {
+  const current = compactBundle(currentData);
+  const incoming = compactBundle(incomingData);
+
+  return {
+    staff: mergeByKey(current.staff, incoming.staff, (item) => comparableName(item.name)),
+    customers: mergeByKey(current.customers, incoming.customers, (item) => item.id || comparableName(item.name)),
+    inventory: mergeByKey(current.inventory, incoming.inventory, (item) => item.id || comparableName(item.name)),
+    chemicalDeliveries: mergeByKey(current.chemicalDeliveries, incoming.chemicalDeliveries, (item) => item.id),
+    appointments: mergeByKey(current.appointments, incoming.appointments, (item) => item.id),
+    routines: mergeByKey(current.routines, incoming.routines, (item) => item.id),
+  };
+}
+
 function normalizeData(data) {
   const staffList = Array.isArray(data.staff) ? [...data.staff] : [...defaults.staff];
   defaults.staff.forEach((defaultPerson) => {
@@ -143,16 +123,62 @@ function normalizeData(data) {
     if (!exists) staffList.push(defaultPerson);
   });
 
+  let customers = Array.isArray(data.customers) ? data.customers : defaults.customers;
+  let chemicalDeliveries = Array.isArray(data.chemicalDeliveries) ? data.chemicalDeliveries : defaults.chemicalDeliveries;
+  let appointments = Array.isArray(data.appointments) ? data.appointments : defaults.appointments;
+  let routines = Array.isArray(data.routines) ? data.routines : defaults.routines;
+
+  appointments = appointments.filter((item) => !isDemoAppointment(item));
+  routines = routines.filter((item) => !isDemoRoutine(item));
+  chemicalDeliveries = chemicalDeliveries.filter((item) => !isDemoChemicalDelivery(item));
+  customers = customers.filter((customer) => {
+    if (!isDemoCustomerName(customer.name)) return true;
+    return appointments.some((item) => item.customer === customer.name) || routines.some((item) => item.customer === customer.name);
+  });
+
   return {
     version: "dogam-server-v1",
     staff: staffList,
-    customers: Array.isArray(data.customers) ? data.customers : defaults.customers,
+    customers,
     inventory: Array.isArray(data.inventory) ? data.inventory : defaults.inventory,
-    chemicalDeliveries: Array.isArray(data.chemicalDeliveries) ? data.chemicalDeliveries : defaults.chemicalDeliveries,
-    appointments: Array.isArray(data.appointments) ? data.appointments : defaults.appointments,
-    routines: Array.isArray(data.routines) ? data.routines : defaults.routines,
+    chemicalDeliveries,
+    appointments,
+    routines,
     updatedAt: new Date().toISOString(),
   };
+}
+
+function isDemoCustomerName(value) {
+  const name = comparableName(value);
+  return name === "murat kaya" || name === "ece apartmani";
+}
+
+function isDemoAppointment(item) {
+  const id = String(item.id || "");
+  const customer = comparableName(item.customer);
+  const phone = String(item.phone || "");
+  const address = comparableName(item.address);
+  const note = comparableName(item.note);
+
+  return (
+    id === "job-murat" ||
+    (customer === "murat kaya" && phone === "0532 111 22 33" && address.includes("cumhuriyet mah") && note.includes("mutfak ve banyo")) ||
+    (customer.includes("ece apartman") && phone === "0544 222 33 44" && address.includes("ataturk cad") && note.includes("yonetici kapida"))
+  );
+}
+
+function isDemoRoutine(item) {
+  const id = String(item.id || "");
+  const title = comparableName(item.title);
+  const customer = comparableName(item.customer);
+  const address = comparableName(item.address);
+  return id === "routine-ece" || (title.includes("ece apartman") && customer.includes("ece apartman") && address.includes("ataturk cad"));
+}
+
+function isDemoChemicalDelivery(item) {
+  const id = String(item.id || "");
+  const note = comparableName(item.note);
+  return id === "delivery-ali" || id === "delivery-servet" || note.includes("haftalik saha cikisi") || note.includes("rutin servisler icin verildi");
 }
 
 function comparableName(value) {
@@ -227,7 +253,8 @@ async function handleApi(request, response, pathname) {
 
   if (request.method === "POST" && pathname === "/api/data") {
     const body = await readBody(request);
-    writeDb(JSON.parse(body || "{}"));
+    const incoming = JSON.parse(body || "{}");
+    writeDb(mergeDataBundles(readDb(), incoming));
     sendJson(response, 200, { ok: true, updatedAt: new Date().toISOString() });
     return;
   }
