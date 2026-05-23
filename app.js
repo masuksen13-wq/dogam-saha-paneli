@@ -399,6 +399,18 @@ function formatDate(date) {
   }).format(new Date(`${date}T12:00:00`));
 }
 
+function formatDateGroup(date) {
+  const label = new Intl.DateTimeFormat("tr-TR", {
+    day: "2-digit",
+    month: "long",
+    weekday: "long",
+  }).format(new Date(`${date}T12:00:00`));
+
+  if (date === todayIso()) return `Bugün - ${label}`;
+  if (date === addDays(todayIso(), 1)) return `Yarın - ${label}`;
+  return label;
+}
+
 function formatMoney(value) {
   return `${parseMoneyValue(value).toLocaleString("tr-TR")}₺`;
 }
@@ -409,12 +421,19 @@ function parseMoneyValue(value) {
   let text = String(value || "").trim().replace(/[₺\s]/g, "");
   if (!text) return 0;
 
-  if (text.includes(".") && text.includes(",")) {
-    text = text.replace(/\./g, "").replace(",", ".");
-  } else if (text.includes(",")) {
-    text = text.replace(",", ".");
-  } else if ((text.match(/\./g) || []).length === 1 && /\.\d{3}$/.test(text)) {
-    text = text.replace(".", "");
+  text = text.replace(/[^\d.,-]/g, "");
+
+  const separatorMatches = [...text.matchAll(/[.,]/g)];
+  if (separatorMatches.length) {
+    const lastSeparator = separatorMatches[separatorMatches.length - 1];
+    const decimals = text.slice(lastSeparator.index + 1).replace(/\D/g, "");
+    const whole = text.slice(0, lastSeparator.index).replace(/[^\d-]/g, "");
+
+    if (decimals.length > 0 && decimals.length <= 2 && whole) {
+      text = `${whole}.${decimals}`;
+    } else {
+      text = text.replace(/[.,]/g, "");
+    }
   }
 
   const number = Number(text);
@@ -718,7 +737,18 @@ function renderAppointments() {
     return;
   }
 
+  const dateCounts = filtered.reduce((counts, item) => {
+    counts.set(item.date, (counts.get(item.date) || 0) + 1);
+    return counts;
+  }, new Map());
+  let activeDate = "";
+
   filtered.forEach((appointment) => {
+    if (appointment.date !== activeDate) {
+      activeDate = appointment.date;
+      listEl.append(createDateDivider(activeDate, dateCounts.get(activeDate)));
+    }
+
     const card = template.content.firstElementChild.cloneNode(true);
     card.querySelector("h2").textContent = appointment.customer;
     renderJobMeta(card.querySelector(".meta"), [
@@ -1329,6 +1359,20 @@ function emptyState(text) {
   return empty;
 }
 
+function createDateDivider(date, count) {
+  const divider = document.createElement("div");
+  divider.className = "date-divider";
+
+  const title = document.createElement("strong");
+  title.textContent = formatDateGroup(date);
+
+  const badge = document.createElement("span");
+  badge.textContent = `${count || 0} iş`;
+
+  divider.append(title, badge);
+  return divider;
+}
+
 function renderNotificationButton() {
   if (!("Notification" in window)) {
     notificationButton.hidden = true;
@@ -1652,7 +1696,7 @@ document.querySelector("#installButton").addEventListener("click", async () => {
 });
 
 if ("serviceWorker" in navigator && location.protocol !== "file:") {
-  navigator.serviceWorker.register("service-worker.js?v=24").then((registration) => registration.update());
+  navigator.serviceWorker.register("service-worker.js?v=25").then((registration) => registration.update());
 }
 
 try {

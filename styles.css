@@ -405,6 +405,36 @@ textarea {
   gap: 13px;
 }
 
+.date-divider {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 4px 0 -2px;
+  border: 1px solid #e6dfd7;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--ink);
+  background: linear-gradient(180deg, #fffefa, #f5f1e8);
+  box-shadow: 0 8px 18px rgba(18, 22, 20, 0.05);
+}
+
+.date-divider strong {
+  font-size: 14px;
+  font-weight: 950;
+}
+
+.date-divider span {
+  flex: 0 0 auto;
+  border: 1px solid #ded5ca;
+  border-radius: 999px;
+  padding: 5px 9px;
+  color: #4a504b;
+  background: #fbf7ef;
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .appointment-card,
 .form-card,
 .staff-card,

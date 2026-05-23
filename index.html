@@ -8,7 +8,7 @@
     <link rel="manifest" href="manifest.json?v=22" />
     <link rel="icon" href="icon-512.png" />
     <link rel="apple-touch-icon" href="apple-touch-icon.png" />
-    <link rel="stylesheet" href="styles.css?v=22" />
+    <link rel="stylesheet" href="styles.css?v=25" />
   </head>
   <body>
     <section class="login-screen" id="loginScreen">
@@ -138,7 +138,7 @@
               </label>
               <label>
                 Tutar
-                <input name="amount" type="number" min="0" step="1" inputmode="numeric" placeholder="0" />
+                <input name="amount" type="text" inputmode="numeric" pattern="[0-9., ]*" autocomplete="off" placeholder="0" />
               </label>
             </div>
             <div class="choice-field">
@@ -195,7 +195,7 @@
               </label>
               <label>
                 Tutar
-                <input name="amount" type="number" min="0" step="1" inputmode="numeric" placeholder="0" />
+                <input name="amount" type="text" inputmode="numeric" pattern="[0-9., ]*" autocomplete="off" placeholder="0" />
               </label>
             </div>
             <div class="choice-field">
@@ -342,7 +342,7 @@
           </label>
           <label>
             Tutar
-            <input name="amount" type="number" min="0" step="1" inputmode="numeric" />
+            <input name="amount" type="text" inputmode="numeric" pattern="[0-9., ]*" autocomplete="off" />
           </label>
         </div>
         <label>
@@ -393,7 +393,7 @@
           <div class="form-row">
             <label>
               Tutar
-              <input class="amount-input" type="number" min="0" step="1" inputmode="numeric" />
+              <input class="amount-input" type="text" inputmode="numeric" pattern="[0-9., ]*" autocomplete="off" />
             </label>
             <label>
               Stok
@@ -451,6 +451,6 @@
       </article>
     </template>
 
-    <script src="app.js?v=24"></script>
+    <script src="app.js?v=25"></script>
   </body>
 </html>
