@@ -8,7 +8,7 @@
     <link rel="manifest" href="manifest.json?v=22" />
     <link rel="icon" href="icon-512.png" />
     <link rel="apple-touch-icon" href="apple-touch-icon.png" />
-    <link rel="stylesheet" href="styles.css?v=25" />
+    <link rel="stylesheet" href="styles.css?v=26" />
   </head>
   <body>
     <section class="login-screen" id="loginScreen">
@@ -103,6 +103,24 @@
         </section>
 
         <section class="view" id="newView">
+          <section class="form-card whatsapp-import manager-only">
+            <div class="section-head">
+              <div>
+                <h2>WhatsApp Mesajından İş</h2>
+                <p class="muted-text">Mesajı yapıştırın; müşteri, telefon, adres, tarih, saat, fiyat ve personel bilgileri forma alınır.</p>
+              </div>
+            </div>
+            <label>
+              WhatsApp mesajı
+              <textarea id="whatsappImportText" rows="5" placeholder="Örn. Müşteri: Ahmet Yılmaz&#10;Telefon: 0532 000 00 00&#10;Adres: Cumhuriyet Mah. No: 12&#10;Tarih: 24.05.2026 Saat: 14:30&#10;Fiyat: 2000&#10;Personel: Servet"></textarea>
+            </label>
+            <div class="mini-actions">
+              <button class="secondary-button" id="whatsappFillButton" type="button">Formu Doldur</button>
+              <button class="primary-button" id="whatsappCreateButton" type="button">Direkt Kaydet</button>
+            </div>
+            <p class="import-status muted-text" id="whatsappImportStatus"></p>
+          </section>
+
           <form id="appointmentForm" class="form-card" action="javascript:void(0)" onsubmit="return false">
             <label>
               Müşteri adı
@@ -451,6 +469,6 @@
       </article>
     </template>
 
-    <script src="app.js?v=25"></script>
+    <script src="app.js?v=26"></script>
   </body>
 </html>

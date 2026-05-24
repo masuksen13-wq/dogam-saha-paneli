@@ -474,6 +474,26 @@ textarea {
   background: linear-gradient(180deg, #fffefa, #faf7f0);
 }
 
+.whatsapp-import {
+  border-color: #d9d1c5;
+  background:
+    linear-gradient(180deg, rgba(229, 38, 31, 0.04), rgba(255, 255, 255, 0)),
+    #fffefa;
+}
+
+.whatsapp-import .section-head {
+  margin-bottom: 0;
+}
+
+.whatsapp-import textarea {
+  min-height: 118px;
+}
+
+.import-status {
+  min-height: 20px;
+  font-weight: 850;
+}
+
 .card-head {
   display: flex;
   justify-content: space-between;

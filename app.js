@@ -300,6 +300,10 @@ const importButton = document.querySelector("#importButton");
 const editJobDialog = document.querySelector("#editJobDialog");
 const editJobForm = document.querySelector("#editJobForm");
 const editStaffSelect = document.querySelector("#editStaffSelect");
+const whatsappImportText = document.querySelector("#whatsappImportText");
+const whatsappFillButton = document.querySelector("#whatsappFillButton");
+const whatsappCreateButton = document.querySelector("#whatsappCreateButton");
+const whatsappImportStatus = document.querySelector("#whatsappImportStatus");
 
 function loadStaff() {
   return parseJson(getStored("dogamStaff"), DEFAULT_STAFF);
@@ -527,6 +531,24 @@ function cleanPhone(phone) {
   return digits;
 }
 
+function normalizeSearchText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/ı/g, "i")
+    .replace(/İ/g, "i")
+    .toLocaleLowerCase("tr-TR")
+    .trim();
+}
+
+function formatPhoneForForm(value) {
+  let digits = String(value || "").replace(/\D/g, "");
+  if (digits.startsWith("90")) digits = `0${digits.slice(2)}`;
+  if (digits.startsWith("5")) digits = `0${digits}`;
+  if (digits.length !== 11) return String(value || "").trim();
+  return `${digits.slice(0, 4)} ${digits.slice(4, 7)} ${digits.slice(7, 9)} ${digits.slice(9)}`;
+}
+
 function whatsappUrl(item) {
   const phone = cleanPhone(item.phone);
   const text = `Merhaba, Doğam Böcek İlaçlama randevunuz ${formatDate(item.date || todayIso())} ${item.time || ""} için planlanmıştır.`;
@@ -561,6 +583,272 @@ function ensureCustomer(name, phone, address, note = "") {
 
   saveCustomers();
   return customer;
+}
+
+function createAppointmentRecord(input) {
+  const assignedStaff = validAssigneeName(input.staff);
+  const customer = String(input.customer || "").trim();
+  const address = String(input.address || "").trim();
+  if (!customer || !address || !assignedStaff) return false;
+
+  const amount = parseMoneyValue(input.amount);
+  const createdAt = input.createdAt || new Date().toISOString();
+
+  ensureCustomer(customer, input.phone || "", address, input.note || "");
+  appointments.push({
+    id: createId(),
+    customer,
+    phone: String(input.phone || "").trim(),
+    address,
+    date: input.date || todayIso(),
+    time: input.time || currentTime(),
+    service: input.service || "Haşere ilaçlama",
+    staff: assignedStaff,
+    note: String(input.note || "").trim(),
+    amount,
+    status: "planned",
+    paymentMethod: "",
+    paidAmount: 0,
+    debtAmount: amount,
+    photos: [],
+    stockUsage: [],
+    createdAt,
+    updatedAt: createdAt,
+    createdBy: currentUser.name,
+  });
+  saveAppointments({ immediate: true });
+  return true;
+}
+
+function messageLines(text) {
+  return String(text || "")
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function labeledValue(lines, labels) {
+  const keys = labels.map(normalizeSearchText);
+
+  for (const line of lines) {
+    const match = line.match(/^([^:=-]{2,28})\s*[:=-]\s*(.+)$/);
+    if (!match) continue;
+
+    const key = normalizeSearchText(match[1]);
+    if (keys.some((label) => key === label || key.includes(label))) return match[2].trim();
+  }
+
+  return "";
+}
+
+function isoDateFromParts(year, month, day) {
+  const date = new Date(year, month - 1, day, 12);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return "";
+  return date.toISOString().slice(0, 10);
+}
+
+function parseDateFromMessage(text, lines) {
+  const explicit = labeledValue(lines, ["tarih", "gün", "gun", "randevu tarihi"]);
+  const source = explicit || text;
+  const normalized = normalizeSearchText(source);
+
+  if (normalized.includes("bugun")) return todayIso();
+  if (normalized.includes("yarin")) return addDays(todayIso(), 1);
+
+  const numeric = source.match(/\b(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?\b/);
+  if (numeric) {
+    const year = numeric[3] ? Number(numeric[3].length === 2 ? `20${numeric[3]}` : numeric[3]) : new Date().getFullYear();
+    return isoDateFromParts(year, Number(numeric[2]), Number(numeric[1]));
+  }
+
+  const months = {
+    ocak: 1,
+    subat: 2,
+    mart: 3,
+    nisan: 4,
+    mayis: 5,
+    haziran: 6,
+    temmuz: 7,
+    agustos: 8,
+    eylul: 9,
+    ekim: 10,
+    kasim: 11,
+    aralik: 12,
+  };
+  const monthMatch = normalized.match(/\b(\d{1,2})\s*(ocak|subat|mart|nisan|mayis|haziran|temmuz|agustos|eylul|ekim|kasim|aralik)\b/);
+  if (monthMatch) return isoDateFromParts(new Date().getFullYear(), months[monthMatch[2]], Number(monthMatch[1]));
+
+  const dayMatch = normalized.match(/\bayin\s*(\d{1,2})\b/);
+  if (dayMatch) {
+    const now = new Date();
+    return isoDateFromParts(now.getFullYear(), now.getMonth() + 1, Number(dayMatch[1]));
+  }
+
+  return "";
+}
+
+function parseTimeFromMessage(text, lines) {
+  const explicit = labeledValue(lines, ["saat", "randevu saati"]);
+  const explicitMatch = explicit.match(/\b([01]?\d|2[0-3])(?:[:.](\d{2}))?\b/);
+  if (explicitMatch) return `${explicitMatch[1].padStart(2, "0")}:${explicitMatch[2] || "00"}`;
+
+  const withLabel = normalizeSearchText(text).match(/\bsaat\s*([01]?\d|2[0-3])(?:[:.](\d{2}))?\b/);
+  if (withLabel) return `${withLabel[1].padStart(2, "0")}:${withLabel[2] || "00"}`;
+
+  const general = text.match(/\b([01]?\d|2[0-3])[:.](\d{2})\b/);
+  return general ? `${general[1].padStart(2, "0")}:${general[2]}` : "";
+}
+
+function parsePhoneFromMessage(text, lines) {
+  const explicit = labeledValue(lines, ["telefon", "tel", "gsm"]);
+  const source = explicit || text;
+  const match = source.match(/(?:\+?90\s*)?0?5[\d\s().-]{8,16}/);
+  return match ? formatPhoneForForm(match[0]) : "";
+}
+
+function parseAmountFromMessage(text, lines) {
+  const explicit = labeledValue(lines, ["tutar", "fiyat", "ücret", "ucret", "bedel"]);
+  if (explicit) return parseMoneyValue(explicit);
+
+  const money = text.match(/(?:tutar|fiyat|ücret|ucret|bedel|₺|tl)\s*[:=-]?\s*([0-9][0-9\s.,]*)/i) || text.match(/([0-9][0-9\s.,]*)\s*(?:₺|tl)\b/i);
+  return money ? parseMoneyValue(money[1]) : 0;
+}
+
+function parseServiceFromMessage(text) {
+  const normalized = normalizeSearchText(text);
+  if (normalized.includes("fare")) return "Fare mücadelesi";
+  if (normalized.includes("periyodik") || normalized.includes("rutin")) return "Periyodik servis";
+  if (normalized.includes("kontrol")) return "Genel kontrol";
+  return "Haşere ilaçlama";
+}
+
+function staffNameFromMessage(text, lines) {
+  const explicit = labeledValue(lines, ["personel", "ekip", "usta", "atanan"]);
+  const source = normalizeSearchText(`${explicit} ${text}`);
+
+  const found = assignableStaff().find((person) => {
+    const name = normalizeSearchText(person.name);
+    const parts = name.split(/\s+/).filter(Boolean);
+    if (name && source.includes(name)) return true;
+    return parts.some((part) => {
+      if (part.length >= 4) return source.includes(part);
+      return new RegExp(`\\b${part}\\b`).test(source);
+    });
+  });
+
+  return found?.name || validAssigneeName(staffSelectValue.value) || assignableStaff()[0]?.name || "";
+}
+
+function looksLikeAddress(line) {
+  const normalized = normalizeSearchText(line);
+  return /\b(mah|mahalle|sok|sokak|cad|cadde|bulvar|no|apt|apartman|site|blok|kat|daire|adres|konum)\b/.test(normalized);
+}
+
+function parseAddressFromMessage(text, lines) {
+  const explicit = labeledValue(lines, ["adres", "konum", "lokasyon"]);
+  if (explicit) return explicit;
+  return lines.filter(looksLikeAddress).join(" ").trim();
+}
+
+function parseCustomerFromMessage(text, lines) {
+  const explicit = labeledValue(lines, ["müşteri", "musteri", "müşteri adı", "musteri adi", "ad soyad", "isim"]);
+  if (explicit) return explicit.replace(parsePhoneFromMessage(text, lines), "").trim();
+
+  return (
+    lines.find((line) => {
+      const normalized = normalizeSearchText(line);
+      if (!normalized || normalized.includes("merhaba")) return false;
+      if (/^([^:=-]{2,28})\s*[:=-]/.test(line)) return false;
+      if (looksLikeAddress(line)) return false;
+      if (parsePhoneFromMessage(line, [line])) return false;
+      if (parseDateFromMessage(line, [line])) return false;
+      if (parseAmountFromMessage(line, [line])) return false;
+      return normalized.length >= 3 && normalized.length <= 70;
+    }) || ""
+  ).trim();
+}
+
+function parseWhatsappJobMessage(text) {
+  const lines = messageLines(text);
+  const customer = parseCustomerFromMessage(text, lines);
+  const phone = parsePhoneFromMessage(text, lines);
+  const address = parseAddressFromMessage(text, lines);
+  const date = parseDateFromMessage(text, lines);
+  const time = parseTimeFromMessage(text, lines);
+  const amount = parseAmountFromMessage(text, lines);
+  const staffName = staffNameFromMessage(text, lines);
+  const service = parseServiceFromMessage(text);
+  const noteLines = lines.filter((line) => {
+    if (/^([^:=-]{2,28})\s*[:=-]/.test(line)) return false;
+    if ([customer, phone, address].some((value) => value && line.includes(value))) return false;
+    if (looksLikeAddress(line) || parsePhoneFromMessage(line, [line]) || parseDateFromMessage(line, [line]) || parseAmountFromMessage(line, [line])) return false;
+    return true;
+  });
+
+  return {
+    customer,
+    phone,
+    address,
+    date: date || todayIso(),
+    time: time || currentTime(),
+    service,
+    staff: staffName,
+    amount,
+    note: `WhatsApp'tan alındı. ${noteLines.join(" / ")}`.trim(),
+  };
+}
+
+function fillAppointmentFormFromWhatsapp(parsed) {
+  const fields = form.elements;
+  fields.customer.value = parsed.customer || fields.customer.value;
+  fields.phone.value = parsed.phone || fields.phone.value;
+  fields.address.value = parsed.address || fields.address.value;
+  fields.date.value = parsed.date || todayIso();
+  fields.time.value = parsed.time || currentTime();
+  fields.service.value = parsed.service || "Haşere ilaçlama";
+  fields.amount.value = parsed.amount || "";
+  fields.note.value = parsed.note || fields.note.value;
+
+  if (validAssigneeName(parsed.staff)) {
+    staffSelectValue.value = parsed.staff;
+    setButtonByValue(staffAssignButtons, parsed.staff);
+  }
+}
+
+function importWhatsappMessage({ direct = false } = {}) {
+  const text = whatsappImportText.value.trim();
+  if (!text) {
+    whatsappImportStatus.textContent = "Önce WhatsApp mesajını yapıştırın.";
+    return;
+  }
+
+  const parsed = parseWhatsappJobMessage(text);
+  fillAppointmentFormFromWhatsapp(parsed);
+
+  if (!direct) {
+    whatsappImportStatus.textContent = "Bilgiler forma aktarıldı. Kontrol edip İşi Kaydet'e basabilirsiniz.";
+    document.querySelector('[data-view="new"]').click();
+    return;
+  }
+
+  const missing = [];
+  if (!parsed.customer) missing.push("müşteri");
+  if (!parsed.address) missing.push("adres");
+  if (!validAssigneeName(parsed.staff)) missing.push("personel");
+
+  if (missing.length) {
+    whatsappImportStatus.textContent = `Eksik bilgi var: ${missing.join(", ")}. Formu tamamlayıp kaydedin.`;
+    document.querySelector('[data-view="new"]').click();
+    return;
+  }
+
+  createAppointmentRecord(parsed);
+  whatsappImportText.value = "";
+  whatsappImportStatus.textContent = "WhatsApp mesajı iş olarak kaydedildi.";
+  form.reset();
+  setDefaultChoices();
+  document.querySelector('[data-view="appointments"]').click();
+  render();
 }
 
 function renderOptions() {
@@ -1487,6 +1775,8 @@ logoutButton.addEventListener("click", () => {
 
 statusFilter.addEventListener("change", render);
 staffFilter.addEventListener("change", render);
+whatsappFillButton.addEventListener("click", () => importWhatsappMessage());
+whatsappCreateButton.addEventListener("click", () => importWhatsappMessage({ direct: true }));
 
 editJobForm.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -1503,34 +1793,18 @@ form.addEventListener("submit", (event) => {
   if (!isManager()) return;
 
   const data = new FormData(form);
-  const assignedStaff = validAssigneeName(data.get("staff"));
-  if (!assignedStaff) return;
-  const amount = parseMoneyValue(data.get("amount"));
-  const createdAt = new Date().toISOString();
-
-  ensureCustomer(data.get("customer"), data.get("phone"), data.get("address"), data.get("note"));
-  appointments.push({
-    id: createId(),
+  if (!createAppointmentRecord({
     customer: data.get("customer").trim(),
     phone: data.get("phone").trim(),
     address: data.get("address").trim(),
     date: data.get("date"),
     time: data.get("time"),
     service: data.get("service"),
-    staff: assignedStaff,
+    staff: data.get("staff"),
     note: data.get("note").trim(),
-    amount,
-    status: "planned",
-    paymentMethod: "",
-    paidAmount: 0,
-    debtAmount: amount,
-    photos: [],
-    stockUsage: [],
-    createdAt,
-    updatedAt: createdAt,
-    createdBy: currentUser.name,
-  });
-  saveAppointments({ immediate: true });
+    amount: data.get("amount"),
+  })) return;
+
   form.reset();
   setDefaultChoices();
   document.querySelector('[data-view="appointments"]').click();
@@ -1696,7 +1970,7 @@ document.querySelector("#installButton").addEventListener("click", async () => {
 });
 
 if ("serviceWorker" in navigator && location.protocol !== "file:") {
-  navigator.serviceWorker.register("service-worker.js?v=25").then((registration) => registration.update());
+  navigator.serviceWorker.register("service-worker.js?v=26").then((registration) => registration.update());
 }
 
 try {
